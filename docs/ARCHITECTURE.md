@@ -192,6 +192,13 @@ Commands:
 - `device_info(port: string) -> string | null` (sends `?\n`, reads the DESKBUNNY line)
 - `list_saved_faces() -> FaceDef[]`, `save_face(face)`, `delete_face(name)` (app data dir, JSON)
 - `encode_face(face) -> number[]` (64 bytes, for export/debug)
+- `export_face(face) -> string | null`: native save dialog (default file name
+  `<NAME>.deskbunny.json`), writes pretty FaceDef JSON, returns the path or
+  `null` if cancelled.
+- `import_face() -> FaceDef | null`: native open dialog filtered to `*.json`,
+  parses, clamps and validates; `null` if cancelled; rejects bad files with a
+  readable error. Both dialogs run in Rust (`tauri-plugin-dialog`); the webview
+  has no dialog or filesystem permissions.
 
 Errors are returned as strings a human can act on ("No response from bootloader
 on /dev/ttyUSB0. Is this an old-bootloader Nano? Try 'Nano (old bootloader)'.").

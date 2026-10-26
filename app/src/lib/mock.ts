@@ -182,6 +182,40 @@ export async function encodeFace(face: FaceDef): Promise<number[]> {
   return out;
 }
 
+// ---------------------------------------------------------------- import / export
+// The real app uses native dialogs in Rust; the browser falls back to a download
+// link and a file picker.
+
+export async function exportFace(face: FaceDef): Promise<string | null> {
+  const file = `${sanitizeName(face.name).trim() || "FACE"}.deskbunny.json`;
+  const url = URL.createObjectURL(new Blob([JSON.stringify(face, null, 2) + "\n"], { type: "application/json" }));
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = file;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  return file;
+}
+
+export function importFace(): Promise<FaceDef | null> {
+  return new Promise((resolve, reject) => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = ".json,application/json";
+    input.addEventListener("cancel", () => resolve(null));
+    input.addEventListener("change", async () => {
+      const file = input.files?.[0];
+      if (!file) return resolve(null);
+      try {
+        resolve(normalizeFace(JSON.parse(await file.text())));
+      } catch {
+        reject(`${file.name} isn't a DeskBunny face (expected JSON).`);
+      }
+    });
+    input.click();
+  });
+}
+
 // ---------------------------------------------------------------- simulator
 
 interface Sim {

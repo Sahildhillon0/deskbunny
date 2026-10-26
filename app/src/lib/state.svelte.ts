@@ -66,11 +66,10 @@ class AppState {
     if (this.isSelected("saved", name)) this.source = null;
   }
 
-  importJson(text: string) {
-    const face = normalizeFace(JSON.parse(text));
-    this.face = face;
+  /** Loads an imported face (already validated by the backend) as an unsaved working copy. */
+  loadImported(face: FaceDef) {
+    this.face = normalizeFace(face);
     this.source = null;
-    return face;
   }
 }
 

@@ -187,6 +187,21 @@ fn delete_face(app: AppHandle, name: String) -> CmdResult<()> {
 }
 
 #[tauri::command]
+async fn export_face(app: AppHandle, face: FaceDef) -> CmdResult<Option<String>> {
+    // Dialogs block until closed; keep them off the async workers.
+    tauri::async_runtime::spawn_blocking(move || faces::export(&app, &face))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn import_face(app: AppHandle) -> CmdResult<Option<FaceDef>> {
+    tauri::async_runtime::spawn_blocking(move || faces::import(&app))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
 async fn device_info(port: String) -> CmdResult<Option<String>> {
     tauri::async_runtime::spawn_blocking(move || {
         query_device_info(&SystemHost, &port, Duration::from_millis(3500))
@@ -315,6 +330,7 @@ fn app_port_after_upload(host: &dyn SerialHost, board: &Board, original: &str) -
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .manage(Sims::default())
         .manage(FlashLock::default())
         .invoke_handler(tauri::generate_handler![
@@ -331,6 +347,8 @@ pub fn run() {
             save_face,
             delete_face,
             encode_face,
+            export_face,
+            import_face,
         ])
         .run(tauri::generate_context!())
         .expect("error while running DeskBunny");

@@ -68,9 +68,96 @@ pub fn delete(app: &AppHandle, name: &str) -> Result<(), String> {
     }
 }
 
+/// Largest face file accepted on import (a face is well under 1 KiB of JSON).
+const IMPORT_MAX: u64 = 64 * 1024;
+
+/// Save dialog, then write the face as pretty JSON. `None` when cancelled.
+pub fn export(app: &AppHandle, face: &FaceDef) -> Result<Option<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+    let face = face.sanitized();
+    let stem = if face.name.is_empty() {
+        "FACE".to_string()
+    } else {
+        face.name.replace(' ', "_")
+    };
+    let Some(picked) = app
+        .dialog()
+        .file()
+        .set_title("Export face")
+        .set_file_name(format!("{stem}.deskbunny.json"))
+        .add_filter("DeskBunny face", &["json"])
+        .blocking_save_file()
+    else {
+        return Ok(None);
+    };
+    let path = picked
+        .into_path()
+        .map_err(|e| format!("Cannot save to that location: {e}"))?;
+    let json = serde_json::to_string_pretty(&face).map_err(|e| e.to_string())?;
+    std::fs::write(&path, json).map_err(|e| format!("Could not write {}: {e}", path.display()))?;
+    Ok(Some(path.display().to_string()))
+}
+
+/// Open dialog, then parse, validate and clamp. `None` when cancelled.
+pub fn import(app: &AppHandle) -> Result<Option<FaceDef>, String> {
+    use tauri_plugin_dialog::DialogExt;
+    let Some(picked) = app
+        .dialog()
+        .file()
+        .set_title("Import face")
+        .add_filter("DeskBunny face", &["json"])
+        .blocking_pick_file()
+    else {
+        return Ok(None);
+    };
+    let path = picked
+        .into_path()
+        .map_err(|e| format!("Cannot open that file: {e}"))?;
+    let meta =
+        std::fs::metadata(&path).map_err(|e| format!("Could not read {}: {e}", path.display()))?;
+    if meta.len() > IMPORT_MAX {
+        return Err(format!(
+            "{} is too large to be a DeskBunny face.",
+            path.display()
+        ));
+    }
+    let text = std::fs::read_to_string(&path)
+        .map_err(|e| format!("Could not read {}: {e}", path.display()))?;
+    parse_import(&text).map(Some)
+}
+
+fn parse_import(text: &str) -> Result<FaceDef, String> {
+    let face: FaceDef = serde_json::from_str(text).map_err(|e| {
+        format!(
+            "This file is not a DeskBunny face ({e}). Export faces from DeskBunny to share them."
+        )
+    })?;
+    let face = face.sanitized();
+    face.validate().map_err(|e| e.to_string())?;
+    Ok(face)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn import_parses_validates_and_clamps() {
+        let mut v = serde_json::to_value(deskbunny_core::default_preset()).unwrap();
+        v["name"] = "my bunny!".into();
+        v["eyeW"] = 200.into();
+        let f = parse_import(&v.to_string()).unwrap();
+        assert_eq!(f.name, "MY BUNNY");
+        assert_eq!(f.eye_w, 56);
+        assert!(parse_import("{}")
+            .unwrap_err()
+            .contains("not a DeskBunny face"));
+        v["mood"] = "grumpy".into();
+        assert!(parse_import(&v.to_string()).is_err());
+        v["mood"] = "angry".into();
+        v["name"] = "!!!".into();
+        assert!(parse_import(&v.to_string()).unwrap_err().contains("empty"));
+    }
 
     #[test]
     fn file_names_are_confined() {

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { errorText } from "../api";
+  import * as api from "../api";
   import { app } from "../state.svelte";
   import { MOODS, NAME_MAX, OVERLAYS, sanitizeName, type Mood, type Overlay } from "../types";
   import Icon from "./Icon.svelte";
@@ -40,7 +40,6 @@
   let status = $state<{ kind: "ok" | "error"; text: string } | null>(null);
   let confirmDelete = $state(false);
   let busy = $state(false);
-  let fileInput: HTMLInputElement;
   let statusTimer: ReturnType<typeof setTimeout> | undefined;
 
   const f = $derived(app.face);
@@ -73,7 +72,7 @@
       await app.save();
       say("ok", updating ? `Updated ${f.name}` : `Saved ${f.name} to My faces`);
     } catch (e) {
-      say("error", errorText(e));
+      say("error", api.errorText(e));
     } finally {
       busy = false;
     }
@@ -93,35 +92,29 @@
       await app.remove(target.name);
       say("ok", `Deleted ${target.name}`);
     } catch (e) {
-      say("error", errorText(e));
+      say("error", api.errorText(e));
     } finally {
       busy = false;
     }
   }
 
-  function exportJson() {
-    const face = $state.snapshot(app.face);
-    const blob = new Blob([JSON.stringify(face, null, 2) + "\n"], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `${(face.name.trim() || "face").toLowerCase().replace(/\s+/g, "-")}.deskbunny.json`;
-    document.body.append(a);
-    a.click();
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
-    say("ok", `Exported ${a.download}`);
+  async function exportFace() {
+    try {
+      const path = await api.exportFace($state.snapshot(app.face));
+      if (path) say("ok", `Exported to ${path}`);
+    } catch (e) {
+      say("error", api.errorText(e));
+    }
   }
 
-  async function importJson(e: Event & { currentTarget: HTMLInputElement }) {
-    const file = e.currentTarget.files?.[0];
-    e.currentTarget.value = "";
-    if (!file) return;
+  async function importFace() {
     try {
-      const face = app.importJson(await file.text());
+      const face = await api.importFace();
+      if (!face) return;
+      app.loadImported(face);
       say("ok", `Imported ${face.name}`);
-    } catch {
-      say("error", `${file.name} isn't a DeskBunny face (expected JSON).`);
+    } catch (e) {
+      say("error", api.errorText(e));
     }
   }
 </script>
@@ -233,13 +226,12 @@
       </button>
     {/if}
     <span class="spacer"></span>
-    <button class="btn ghost icon" onclick={() => fileInput.click()} title="Import face JSON" aria-label="Import face JSON">
+    <button class="btn ghost icon" onclick={importFace} title="Import face JSON" aria-label="Import face JSON">
       <Icon name="upload" />
     </button>
-    <button class="btn ghost icon" onclick={exportJson} title="Export face JSON" aria-label="Export face JSON">
+    <button class="btn ghost icon" onclick={exportFace} title="Export face JSON" aria-label="Export face JSON">
       <Icon name="download" />
     </button>
-    <input bind:this={fileInput} type="file" accept=".json,application/json" onchange={importJson} hidden />
   </div>
   <p class="status" class:error={status?.kind === "error"} aria-live="polite">{status?.text ?? ""}</p>
 </footer>

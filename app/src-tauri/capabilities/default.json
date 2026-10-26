@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Main window: core APIs (window, events) plus the app's own commands, which are allowed by default.",
+  "description": "Main window: core APIs (window, events) plus the app's own commands, which are allowed by default. The dialog plugin is driven only from Rust (export_face/import_face), so the webview gets no dialog:* permission and never sees arbitrary file paths it did not receive back from a user-picked dialog.",
   "windows": ["main"],
   "permissions": ["core:default"]
 }

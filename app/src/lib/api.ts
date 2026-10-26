@@ -80,3 +80,11 @@ export const deleteFace = (name: string): Promise<void> =>
 
 export const encodeFace = (face: FaceDef): Promise<number[]> =>
   isTauri ? invoke<number[]>("encode_face", { face }) : mock().then((m) => m.encodeFace(face));
+
+/** Native save dialog; resolves to the written path, or null if cancelled. */
+export const exportFace = (face: FaceDef): Promise<string | null> =>
+  isTauri ? invoke<string | null>("export_face", { face }) : mock().then((m) => m.exportFace(face));
+
+/** Native open dialog; resolves to the validated face, or null if cancelled. */
+export const importFace = (): Promise<FaceDef | null> =>
+  isTauri ? invoke<FaceDef | null>("import_face") : mock().then((m) => m.importFace());
