@@ -1,0 +1,7 @@
+target/
+node_modules/
+app/dist/
+firmware/dist/
+firmware/build/
+engine/build/
+.DS_Store
