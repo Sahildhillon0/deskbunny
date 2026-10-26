@@ -19,7 +19,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.ref }}
 
@@ -28,7 +28,7 @@ jobs:
           version: 1.x
 
       # Cores (arduino:avr, arduino:renesas_uno) are installed by build.sh; cache them.
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: ~/.arduino15
           key: arduino15-${{ runner.os }}-${{ hashFiles('firmware/boards.json', 'firmware/build.sh') }}
@@ -52,7 +52,7 @@ jobs:
               done
           } | tee -a "$GITHUB_STEP_SUMMARY"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: firmware-dist
           path: firmware/dist/
