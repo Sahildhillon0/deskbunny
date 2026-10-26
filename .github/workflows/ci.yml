@@ -26,7 +26,7 @@ jobs:
       matrix:
         cc: [gcc, clang]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Host tests
         run: |
           test -f engine/Makefile || { echo "::error file=engine/Makefile::engine/Makefile is missing; 'make -C engine test' is the engine test entry point"; exit 1; }
@@ -42,8 +42,8 @@ jobs:
       run:
         working-directory: app
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
@@ -57,10 +57,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # tauri.conf.json bundles ../../firmware/dist/* as resources; the glob must resolve to compile.
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: firmware-dist
           path: firmware/dist
@@ -74,7 +74,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       # generate_context! needs frontendDist (app/dist) to exist.
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
@@ -108,9 +108,9 @@ jobs:
             os: macos-latest
             args: --target universal-apple-darwin
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: firmware-dist
           path: firmware/dist
@@ -126,7 +126,7 @@ jobs:
         with:
           key: bundle-${{ matrix.name }}
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
@@ -137,12 +137,12 @@ jobs:
 
       # No tagName/releaseId: build only, no GitHub release. Bundles are unsigned here.
       # Windows: default MSI + NSIS only; custom WiX fragments referencing resources trip ICE69.
-      - uses: tauri-apps/tauri-action@v0
+      - uses: tauri-apps/tauri-action@v1
         with:
           projectPath: app
           args: ${{ matrix.args }}
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: deskbunny-${{ matrix.name }}
           path: |
