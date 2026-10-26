@@ -1,58 +1,136 @@
-# Tag vX.Y.Z -> draft GitHub release with installers for all three OSes plus the
-# raw firmware images. Review and publish the draft by hand. See docs/RELEASING.md.
+# Publishes a GitHub release with installers for all three OSes plus the raw
+# firmware images, so users can download straight from the Releases page.
+#
+# Runs on every push to main, but only releases when the app version
+# (app/src-tauri/tauri.conf.json) has no published release yet: bump the
+# version with scripts/bump-version.sh and push to ship a new one. Pushing a
+# vX.Y.Z tag or running it by hand works too. See docs/RELEASING.md.
+#
+# The release stays a draft until every installer and firmware file is
+# attached, then is published as Latest, so a failed build never goes public.
 name: Release
 
 on:
   push:
+    branches: [main]
     tags: ["v*"]
   workflow_dispatch:
     inputs:
-      tag:
-        description: Existing tag to (re)build a draft release for, e.g. v0.1.0
-        required: true
+      ref:
+        description: Branch, tag or commit to release (defaults to the selected branch)
+        required: false
         type: string
 
 permissions:
   contents: read
 
+# One release run at a time; a later push waits and then sees the release exists.
 concurrency:
-  group: release-${{ inputs.tag || github.ref_name }}
+  group: release
   cancel-in-progress: false
 
 env:
   CARGO_TERM_COLOR: always
   NODE_VERSION: "22"
-  TAG: ${{ inputs.tag || github.ref_name }}
 
 jobs:
   preflight:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # creates the draft release
+    outputs:
+      release: ${{ steps.plan.outputs.release }}
+      tag: ${{ steps.plan.outputs.tag }}
+      sha: ${{ steps.plan.outputs.sha }}
+      release_id: ${{ steps.draft.outputs.id }}
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ env.TAG }}
-      - name: Tag matches app version
+          ref: ${{ inputs.ref || github.sha }}
+
+      - name: Decide whether to release
+        id: plan
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
         run: |
-          want="${TAG#v}"
-          conf=$(jq -r '.version // empty' app/src-tauri/tauri.conf.json)
-          pkg=$(jq -r '.version' app/package.json)
-          echo "tag=$want tauri.conf.json=${conf:-<from Cargo.toml>} package.json=$pkg"
-          if [ -n "$conf" ] && [ "$conf" != "$want" ]; then
-            echo "::error file=app/src-tauri/tauri.conf.json::version $conf does not match tag $TAG"; exit 1
+          conf=$(jq -r .version app/src-tauri/tauri.conf.json)
+          pkg=$(jq -r .version app/package.json)
+          cargo=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          fw=$(sed -n 's/^#define DB_FW_VERSION "\(.*\)"/\1/p' firmware/deskbunny/deskbunny.ino)
+          echo "tauri.conf.json=$conf package.json=$pkg Cargo.toml=$cargo firmware=$fw"
+          for v in "$pkg" "$cargo" "$fw"; do
+            if [ "$v" != "$conf" ]; then
+              echo "::error::Version numbers disagree. Run scripts/bump-version.sh $conf and push again."; exit 1
+            fi
+          done
+          tag="v$conf"
+          if [ "$REF_TYPE" = tag ] && [ "$REF_NAME" != "$tag" ]; then
+            echo "::error::Tag $REF_NAME does not match the app version $conf."; exit 1
           fi
-          if [ "$pkg" != "$want" ]; then
-            echo "::error file=app/package.json::version $pkg does not match tag $TAG"; exit 1
+          published=$(gh api "repos/$GITHUB_REPOSITORY/releases" --paginate \
+            -q ".[] | select(.tag_name == \"$tag\" and .draft == false) | .id")
+          if [ -n "$published" ]; then
+            echo "::notice::$tag is already released. Bump the version (scripts/bump-version.sh) to release again."
+            echo "release=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "release=true" >> "$GITHUB_OUTPUT"
           fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      # Reuses the draft a failed earlier run left behind for the same version.
+      - name: Create the draft release
+        id: draft
+        if: steps.plan.outputs.release == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.plan.outputs.tag }}
+          SHA: ${{ steps.plan.outputs.sha }}
+        run: |
+          body=$(cat <<EOF
+          ## Download
+
+          | System | File |
+          |---|---|
+          | Windows | \`DeskBunny_*_x64-setup.exe\` or \`.msi\` |
+          | macOS (Apple silicon and Intel) | \`DeskBunny_*_universal.dmg\` |
+          | Linux | \`.AppImage\`, \`.deb\` or \`.rpm\` |
+
+          DeskBunny walks you through setup on first launch. The same steps are in
+          [docs/SETUP.md](https://github.com/$GITHUB_REPOSITORY/blob/$TAG/docs/SETUP.md).
+
+          The builds are not code-signed yet. On Windows, click **More info > Run anyway**.
+          On macOS, right-click the app and choose **Open** the first time.
+
+          The \`.hex\`/\`.bin\` firmware images and \`manifest.json\` are for flashing by hand;
+          the app already includes them.
+          EOF
+          )
+          id=$(gh api "repos/$GITHUB_REPOSITORY/releases" --paginate \
+            -q ".[] | select(.tag_name == \"$TAG\" and .draft) | .id" | head -n1)
+          if [ -z "$id" ]; then
+            id=$(gh api "repos/$GITHUB_REPOSITORY/releases" -X POST \
+              -f tag_name="$TAG" -f target_commitish="$SHA" -f name="DeskBunny $TAG" \
+              -f body="$body" -F draft=true -q .id)
+          else
+            gh api "repos/$GITHUB_REPOSITORY/releases/$id" -X PATCH \
+              -f target_commitish="$SHA" -f body="$body" > /dev/null
+          fi
+          echo "Draft release $TAG: id $id"
+          echo "id=$id" >> "$GITHUB_OUTPUT"
 
   firmware:
     needs: preflight
+    if: needs.preflight.outputs.release == 'true'
     uses: ./.github/workflows/firmware.yml
     with:
-      ref: ${{ inputs.tag || github.ref_name }}
+      ref: ${{ needs.preflight.outputs.sha }}
 
   build:
     name: build (${{ matrix.name }})
-    needs: firmware
+    needs: [preflight, firmware]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     permissions:
@@ -73,7 +151,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ env.TAG }}
+          ref: ${{ needs.preflight.outputs.sha }}
 
       - uses: actions/download-artifact@v8
         with:
@@ -163,28 +241,30 @@ jobs:
         with:
           projectPath: app
           args: ${{ matrix.args }} ${{ steps.wincert.outputs.args }}
-          tagName: ${{ env.TAG }}
-          releaseName: DeskBunny v__VERSION__
-          releaseBody: See the assets below. Firmware images and manifest.json are attached for manual flashing.
-          releaseDraft: true
-          prerelease: false
+          releaseId: ${{ needs.preflight.outputs.release_id }}
 
-  firmware-assets:
-    needs: build
+  publish:
+    needs: [preflight, build]
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      TAG: ${{ needs.preflight.outputs.tag }}
+      RELEASE_ID: ${{ needs.preflight.outputs.release_id }}
     steps:
       - uses: actions/download-artifact@v8
         with:
           name: firmware-dist
           path: firmware/dist
-      # The draft was created by tauri-action above; gh resolves drafts by tag.
-      - name: Attach firmware images to the draft release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Attach firmware images
         run: |
           shopt -s nullglob
           files=(firmware/dist/*.hex firmware/dist/*.bin firmware/dist/manifest.json)
           ls -l "${files[@]}"
           gh release upload "$TAG" "${files[@]}" --clobber --repo "$GITHUB_REPOSITORY"
+      # Publishing creates the tag on the released commit if it doesn't exist yet.
+      - name: Publish
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" -X PATCH \
+            -F draft=false -f make_latest=true -q .html_url

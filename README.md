@@ -35,7 +35,8 @@ bash firmware/build.sh                       # firmware images (needs arduino-cl
 ```
 
 CI builds the firmware and installers for all three platforms on every push.
-Pushing a `v*` tag creates a draft release; see
+To publish a new version on the Releases page, run
+`scripts/bump-version.sh X.Y.Z` and push to `main`; see
 [docs/RELEASING.md](docs/RELEASING.md).
 
 ## Layout

@@ -15,6 +15,10 @@ updates:
     directory: /app
     schedule:
       interval: weekly
+    ignore:
+      # svelte-check 4 supports TypeScript 5 and 6 only.
+      - dependency-name: typescript
+        update-types: ["version-update:semver-major"]
     groups:
       tauri:
         patterns: ["@tauri-apps/*"]

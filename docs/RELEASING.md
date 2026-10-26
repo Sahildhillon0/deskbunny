@@ -1,42 +1,43 @@
 # Releasing DeskBunny
 
-Releases are built by `.github/workflows/release.yml`. Pushing a `vX.Y.Z` tag
-builds the firmware once, builds installers on Linux, Windows and macOS, and
-creates a **draft** GitHub release. Nothing is public until you publish it.
+Releases are published by `.github/workflows/release.yml` straight to the
+repo's **Releases** page, where anyone can download the installers.
+
+It runs on every push to `main`. It publishes a release only when the app
+version has no release yet; otherwise it stops after a few seconds. To ship a
+new version, bump it and push.
 
 ## Cut a release
 
-1. Make sure `main` is green in CI. The release workflow does not run the test
-   suites again; it only builds.
-2. Bump the version to `X.Y.Z` in all of these, in one commit:
-   - `app/src-tauri/tauri.conf.json`: `"version"`
-   - `app/src-tauri/Cargo.toml`: `[package] version` (run `cargo check` so
-     `Cargo.lock` follows)
-   - `app/package.json`: `"version"` (run `npm install --package-lock-only` in
-     `app/` so `package-lock.json` follows)
-   - the firmware version define in `firmware/` (printed in the boot line
-     `DESKBUNNY <fw_version> ...` and written to `manifest.json` as
-     `fwVersion`). Bump it only when the firmware changed; the app version
-     and the firmware version may differ.
-3. Tag and push:
+1. Make sure `main` is green in CI. The release workflow only builds; it does
+   not re-run the test suites.
+2. Bump the version everywhere at once and push:
 
    ```sh
-   git tag -a vX.Y.Z -m "DeskBunny vX.Y.Z"
-   git push origin vX.Y.Z
+   scripts/bump-version.sh 0.2.0
+   git commit -am "release: v0.2.0" && git push
    ```
 
-   The `preflight` job fails if the tag does not match the versions in
-   `tauri.conf.json` and `package.json`.
-4. Wait for the `Release` workflow. It produces a draft release named
-   `DeskBunny vX.Y.Z` with the installers from each OS, then attaches the
-   firmware images and `manifest.json`.
-5. Review the draft on GitHub: download one installer per OS, flash a board,
-   write the release notes, then **Publish**.
+   The script updates `tauri.conf.json`, `Cargo.toml`/`Cargo.lock`,
+   `app/package.json`/`package-lock.json` and the firmware's `DB_FW_VERSION`.
+   The `preflight` job refuses to release if they disagree.
+3. The `Release` workflow then:
+   1. creates a draft release `DeskBunny v0.2.0`;
+   2. builds the firmware once and installers on Linux, Windows and macOS;
+   3. attaches them plus the `.hex`/`.bin` images and `manifest.json`;
+   4. publishes the release as **Latest**, which creates the `v0.2.0` tag.
 
-To rebuild a draft for an existing tag (for example after adding a signing
-secret), run the workflow by hand from the Actions tab
-(`Release` > `Run workflow`) and enter the tag. Delete the old draft first, or
-the new assets are added next to the old ones.
+   If any build fails, the draft stays hidden. Fix the problem and push again:
+   the next run reuses the same draft.
+
+Other ways to start it:
+
+- Push a `vX.Y.Z` tag that matches the app version.
+- Run it from the Actions tab (`Release` > `Run workflow`), optionally with a
+  branch, tag or commit.
+
+To rebuild an already published version (for example after adding a signing
+secret), delete that release and its tag on GitHub, then re-run the workflow.
 
 ## Artifacts
 
