@@ -3,7 +3,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import type { Board, FaceDef, FlashProgress, FlashReport, Port } from "./types";
+import type { Board, FaceDef, FlashProgress, FlashReport, Port, SetupStatus } from "./types";
 
 // Loaded lazily so the mock never ships in the Tauri code path.
 const mock = () => import("./mock");
@@ -88,3 +88,19 @@ export const exportFace = (face: FaceDef): Promise<string | null> =>
 /** Native open dialog; resolves to the validated face, or null if cancelled. */
 export const importFace = (): Promise<FaceDef | null> =>
   isTauri ? invoke<FaceDef | null>("import_face") : mock().then((m) => m.importFace());
+
+// ---------------------------------------------------------------- setup guide
+
+export const setupStatus = (): Promise<SetupStatus> =>
+  isTauri ? invoke<SetupStatus>("setup_status") : mock().then((m) => m.setupStatus());
+
+/** Runs a one-click fix; resolves to a success message, rejects with a readable error. */
+export const setupRun = (action: string): Promise<string> =>
+  isTauri ? invoke<string>("setup_run", { action }) : mock().then((m) => m.setupRun(action));
+
+/** Remembers that the guide was finished or skipped, so it doesn't open on launch again. */
+export const setupFinish = (): Promise<void> =>
+  isTauri ? invoke<void>("setup_finish") : mock().then((m) => m.setupFinish());
+
+export const setupOpenLink = (id: string): Promise<void> =>
+  isTauri ? invoke<void>("setup_open_link", { id }) : mock().then((m) => m.setupOpenLink(id));

@@ -14,6 +14,11 @@
     usb: "M8 1.5v10M8 11.5a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3M8 9 4.5 7V5M8 7.5l3.5-2V4M3.5 3.5h2v1.5h-2zM10.5 2.5h2v1.5h-2z",
     bolt: "M9 1.5 3.5 9H8l-1 5.5L12.5 7H8z",
     plus: "M8 3v10M3 8h10",
+    close: "M4 4l8 8M12 4l-8 8",
+    help: "M8 14.5a6.5 6.5 0 1 0 0-13 6.5 6.5 0 0 0 0 13zM6.2 6.2a1.9 1.9 0 1 1 2.6 1.8c-.5.2-.8.6-.8 1.1v.4M8 11.3v.2",
+    info: "M8 14.5a6.5 6.5 0 1 0 0-13 6.5 6.5 0 0 0 0 13zM8 7.5v4M8 4.8v.2",
+    copy: "M5.5 5.5h7v8h-7zM3.5 10.5v-8h7",
+    external: "M9.5 2.5h4v4M13.5 2.5 7.5 8.5M11.5 9.5v4h-9v-9h4",
   } as const;
   export type IconName = keyof typeof PATHS;
 </script>

@@ -67,7 +67,7 @@
     if (/firmware/i.test(msg) && /(bundl|not found|missing|no such)/i.test(msg))
       return "This build doesn't include the firmware images. Run firmware/build.sh (needs arduino-cli), or use a release build.";
     if (/permission denied|access is denied|EACCES/i.test(msg))
-      return "On Linux, add yourself to the dialout group (sudo usermod -aG dialout $USER), then log out and back in.";
+      return "DeskBunny isn't allowed to use this USB device yet. Open the setup guide (the ? button, top left) and follow \"Prepare your computer\".";
     if (/already running/i.test(msg)) return "Wait for the current upload to finish, then try again.";
     if (/busy|in use|already open/i.test(msg))
       return "Another program has the port open. Close any serial monitor or Arduino IDE, then retry.";

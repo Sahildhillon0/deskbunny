@@ -42,7 +42,8 @@
       "icons/icon.ico"
     ],
     "resources": {
-      "../../firmware/dist/": "firmware/"
+      "../../firmware/dist/": "firmware/",
+      "drivers/": "drivers/"
     },
     "linux": {
       "deb": {

@@ -200,6 +200,18 @@ Commands:
   readable error. Both dialogs run in Rust (`tauri-plugin-dialog`); the webview
   has no dialog or filesystem permissions.
 
+Setup guide (first run; see docs/SETUP.md):
+- `setup_status() -> SetupStatus` = `{ os: "linux"|"windows"|"macos", osLabel,
+  firstRun, checks: SetupCheck[] }`. `SetupCheck` = `{ id, title, detail,
+  state: "ok"|"action"|"warn"|"info", action?: { id, label }, commands?:
+  string[], link?: { id, label } }`. `firstRun` is true until `setup_finish`.
+- `setup_run(action: string) -> string`: runs a one-click fix (`install_udev`
+  on Linux via pkexec; `install_r4_driver` on Windows via elevated pnputil)
+  and returns a success message, or rejects with a readable error.
+- `setup_finish()`: writes the `setup-complete-v1` marker in the app config dir.
+- `setup_open_link(id: string)`: opens an allowlisted URL by id; the webview
+  never passes URLs.
+
 Errors are returned as strings a human can act on ("No response from bootloader
 on /dev/ttyUSB0. Is this an old-bootloader Nano? Try 'Nano (old bootloader)'.").
 

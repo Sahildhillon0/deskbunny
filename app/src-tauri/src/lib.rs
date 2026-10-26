@@ -4,6 +4,7 @@
 
 mod faces;
 mod firmware;
+mod setup;
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -327,10 +328,36 @@ fn app_port_after_upload(host: &dyn SerialHost, board: &Board, original: &str) -
     None
 }
 
+#[tauri::command]
+async fn setup_status(app: AppHandle) -> setup::SetupStatus {
+    // Checks shell out (pnputil, sw_vers) and read rule files: keep them off the UI thread.
+    tauri::async_runtime::spawn_blocking(move || setup::status(&app))
+        .await
+        .expect("setup status task panicked")
+}
+
+#[tauri::command]
+async fn setup_run(app: AppHandle, action: String) -> CmdResult<String> {
+    tauri::async_runtime::spawn_blocking(move || setup::run(&app, &action))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+fn setup_finish(app: AppHandle) -> CmdResult<()> {
+    setup::finish(&app)
+}
+
+#[tauri::command]
+fn setup_open_link(app: AppHandle, id: String) -> CmdResult<()> {
+    setup::open_link(&app, &id)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_opener::init())
         .manage(Sims::default())
         .manage(FlashLock::default())
         .invoke_handler(tauri::generate_handler![
@@ -349,6 +376,10 @@ pub fn run() {
             encode_face,
             export_face,
             import_face,
+            setup_status,
+            setup_run,
+            setup_finish,
+            setup_open_link,
         ])
         .run(tauri::generate_context!())
         .expect("error while running DeskBunny");

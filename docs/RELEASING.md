@@ -86,34 +86,7 @@ Without signing:
 
 ## Notes for users (put these in the release notes)
 
-### Linux: serial port access
-
-Flashing needs read/write access to `/dev/ttyUSB*` and `/dev/ttyACM*`. Add the
-user to the serial group, then log out and back in:
-
-```sh
-# Debian, Ubuntu, Mint, Fedora
-sudo usermod -aG dialout "$USER"
-# Arch, Manjaro
-sudo usermod -aG uucp "$USER"
-```
-
-The Uno R4 Minima bootloader is a USB DFU device (`2341:0369`), not a serial
-port. Allow it with a udev rule:
-
-```sh
-echo 'SUBSYSTEM=="usb", ATTRS{idVendor}=="2341", ATTRS{idProduct}=="0369", MODE="0666"' |
-  sudo tee /etc/udev/rules.d/60-deskbunny.rules
-sudo udevadm control --reload-rules && sudo udevadm trigger
-```
-
-### Windows: Uno R4 Minima (DFU)
-
-The Uno R4 Minima is flashed over USB DFU, which needs the **WinUSB** driver
-bound to the bootloader device (`2341:0369`). If the Arduino IDE with the
-"Arduino UNO R4 Boards" core was ever installed, the driver is already there.
-Otherwise: double-tap the board's reset button so it enters the bootloader,
-open [Zadig](https://zadig.akeo.ie/), select the DFU device, choose **WinUSB**
-and click **Install Driver**. The classic AVR boards (Uno, Nano, Mega,
-Leonardo, Micro) and the Uno R4 WiFi use the standard serial drivers; CH340
-clones may need the WCH CH340 driver.
+The app opens a setup guide on first launch that handles USB access on Linux
+and the Uno R4 Minima driver on Windows. Link users to
+[docs/SETUP.md](SETUP.md) for the same steps by hand, and keep that file in
+sync with `app/src-tauri/src/setup.rs` when either changes.

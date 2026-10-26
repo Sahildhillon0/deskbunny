@@ -376,9 +376,9 @@ impl DfuTransport for NusbTransport {
 
 fn open_hint() -> &'static str {
     if cfg!(windows) {
-        "On Windows the DFU interface needs the WinUSB driver: install the 'Arduino UNO R4 Boards' package once in the Arduino IDE (it installs the driver), or assign WinUSB to the 'DFU' device (2341:0369) with Zadig."
+        "Windows needs Arduino's Uno R4 driver for this. Open the setup guide (the ? button, top left) and choose 'Install driver'."
     } else if cfg!(target_os = "linux") {
-        "On Linux, allow access with a udev rule, e.g. /etc/udev/rules.d/60-arduino-renesas.rules containing SUBSYSTEMS==\"usb\", ATTRS{idVendor}==\"2341\", MODE=\"0666\", then run 'sudo udevadm control --reload' and re-plug the board."
+        "Open the setup guide (the ? button, top left) and choose 'Allow USB access', then re-plug the board."
     } else {
         "Close any other program that may be using the board and try again."
     }

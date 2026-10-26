@@ -86,7 +86,7 @@ fn open_error(path: &str, e: serialport::Error) -> FlashError {
         serialport::ErrorKind::NoDevice => "The board was unplugged or the port name changed. Re-plug it and refresh the port list.".to_string(),
         serialport::ErrorKind::Io(io::ErrorKind::PermissionDenied) => {
             if cfg!(target_os = "linux") {
-                "Permission denied. Add yourself to the 'dialout' (Debian/Ubuntu/Fedora) or 'uucp' (Arch) group and log out and back in.".to_string()
+                "DeskBunny isn't allowed to use USB devices yet. Open the setup guide (the ? button, top left) and choose 'Allow USB access'.".to_string()
             } else {
                 "Permission denied. Another program may be using the port.".to_string()
             }

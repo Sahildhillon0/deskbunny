@@ -181,3 +181,27 @@ export function normalizeFace(input: unknown): FaceDef {
     seed: clampInt(o.seed, 0, 255, d.seed),
   };
 }
+
+// ---------------------------------------------------------------- setup guide
+
+export type CheckState = "ok" | "action" | "warn" | "info";
+
+export interface SetupCheck {
+  id: string;
+  title: string;
+  detail: string;
+  state: CheckState;
+  /** One-click fix run by the backend (may show an OS permission prompt). */
+  action?: { id: string; label: string };
+  /** Manual fallback commands the user can copy. */
+  commands?: string[];
+  /** Allowlisted external page, opened by id. */
+  link?: { id: string; label: string };
+}
+
+export interface SetupStatus {
+  os: "linux" | "windows" | "macos";
+  osLabel: string;
+  firstRun: boolean;
+  checks: SetupCheck[];
+}

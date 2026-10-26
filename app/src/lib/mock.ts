@@ -3,7 +3,7 @@
 // rough JS approximation for layout work; the real app always renders with the
 // C engine over IPC. Never import this directly: go through ./api.ts.
 
-import { defaultFace, normalizeFace, sanitizeName, type Board, type FaceDef, type FlashProgress, type FlashReport, type Mood, type Port } from "./types";
+import { defaultFace, normalizeFace, sanitizeName, type Board, type FaceDef, type FlashProgress, type FlashReport, type Mood, type Port, type SetupStatus } from "./types";
 
 const delay = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
@@ -470,4 +470,74 @@ function renderMock(sim: Sim, tMs: number, fb: Uint8Array) {
           fb[(ry >> 3) * W + (W - 1 - x)] |= 1 << (ry & 7);
         }
   }
+}
+
+// ---------------------------------------------------------------- setup guide
+// `?setup` forces the guide open; `?setupdone` makes the USB check pass.
+
+const SETUP_KEY = "deskbunny.mock.setupDone";
+let mockUdevInstalled = new URLSearchParams(location.search).has("setupdone");
+
+function storedDone(): boolean {
+  try {
+    return localStorage.getItem(SETUP_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+export async function setupStatus(): Promise<SetupStatus> {
+  await delay(250);
+  const forced = new URLSearchParams(location.search).has("setup");
+  return {
+    os: "linux",
+    osLabel: "Arch Linux (browser preview)",
+    firstRun: forced || !storedDone(),
+    checks: [
+      mockUdevInstalled
+        ? {
+            id: "usb_access",
+            title: "USB access",
+            detail: "A udev rule lets you reach Arduino boards without root.",
+            state: "ok",
+          }
+        : {
+            id: "usb_access",
+            title: "USB access",
+            detail:
+              "Linux only lets root talk to USB serial ports and bootloaders by default. DeskBunny installs a small udev rule so your user can, with no group changes and no logging out. You will be asked for your password.",
+            state: "action",
+            action: { id: "install_udev", label: "Allow USB access" },
+            commands: [
+              "sudo tee /etc/udev/rules.d/70-deskbunny.rules >/dev/null <<'EOF'\n...\nEOF",
+              "sudo udevadm control --reload-rules && sudo udevadm trigger",
+            ],
+          },
+      {
+        id: "firmware",
+        title: "Firmware",
+        detail: "DeskBunny firmware 0.1.0 is built in for 9 boards.",
+        state: "ok",
+      },
+    ],
+  };
+}
+
+export async function setupRun(action: string): Promise<string> {
+  await delay(900);
+  if (action !== "install_udev") throw `Unknown setup action '${action}'.`;
+  mockUdevInstalled = true;
+  return "USB access allowed. If your board is plugged in, unplug it and plug it back in.";
+}
+
+export async function setupFinish(): Promise<void> {
+  try {
+    localStorage.setItem(SETUP_KEY, "1");
+  } catch {
+    /* private mode: the guide just shows again next time */
+  }
+}
+
+export async function setupOpenLink(id: string): Promise<void> {
+  console.info("[mock] open link", id);
 }

@@ -2,6 +2,8 @@
   import { app, type FaceSource } from "../state.svelte";
   import type { FaceDef } from "../types";
   import Thumb from "./Thumb.svelte";
+  import Icon from "./Icon.svelte";
+  import { setup } from "../setup.svelte";
 
   const MOOD_LABEL: Record<string, string> = {
     neutral: "Watching",
@@ -50,6 +52,9 @@
     <path d="M8 6 6.5 2.5M16 6l1.5-3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
   </svg>
   <span class="title">DeskBunny</span>
+  <button class="btn ghost icon help" title="Setup guide" aria-label="Open the setup guide" onclick={() => setup.show()}>
+    <Icon name="help" />
+  </button>
 </header>
 
 <div class="scroll">
@@ -92,6 +97,11 @@
     height: 22px;
     color: var(--accent);
     filter: drop-shadow(0 0 6px rgba(223, 246, 255, 0.35));
+  }
+
+  .help {
+    margin-left: auto;
+    margin-right: -8px;
   }
 
   .title {

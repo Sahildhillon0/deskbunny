@@ -6,9 +6,12 @@
   import Simulator from "./lib/components/Simulator.svelte";
   import Editor from "./lib/components/Editor.svelte";
   import FlashBar from "./lib/components/FlashBar.svelte";
+  import SetupGuide from "./lib/components/SetupGuide.svelte";
+  import { setup } from "./lib/setup.svelte";
 
   onMount(() => {
     app.load();
+    setup.openIfFirstRun();
   });
 </script>
 
@@ -35,6 +38,10 @@
     <FlashBar />
   </footer>
 </div>
+
+{#if setup.open}
+  <SetupGuide />
+{/if}
 
 <style>
   .shell {
