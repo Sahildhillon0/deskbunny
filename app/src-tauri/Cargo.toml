@@ -18,6 +18,6 @@ deskbunny-flash.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tauri = { version = "2", features = [] }
-sha2 = "0.10"
+sha2 = "0.11"
 tauri-plugin-dialog = "2"
 tauri-plugin-opener = "2"
