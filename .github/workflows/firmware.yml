@@ -1,0 +1,60 @@
+# Reusable: build every board image with arduino-cli and publish firmware/dist
+# as the `firmware-dist` artifact. Called by ci.yml and release.yml.
+name: Firmware
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: Git ref to build (defaults to the triggering ref)
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: firmware
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+
+      - uses: arduino/setup-arduino-cli@v2
+        with:
+          version: 1.x
+
+      # Cores (arduino:avr, arduino:renesas_uno) are installed by build.sh; cache them.
+      - uses: actions/cache@v4
+        with:
+          path: ~/.arduino15
+          key: arduino15-${{ runner.os }}-${{ hashFiles('firmware/boards.json', 'firmware/build.sh') }}
+          restore-keys: arduino15-${{ runner.os }}-
+
+      - name: Build firmware images
+        run: bash firmware/build.sh
+
+      - name: Size report
+        run: |
+          test -f firmware/dist/manifest.json || { echo "::error::firmware/dist/manifest.json was not produced"; exit 1; }
+          ls -l firmware/dist
+          {
+            echo "### Firmware images (fwVersion $(jq -r .fwVersion firmware/dist/manifest.json))"
+            echo
+            echo "| file | format | bytes | blobOffset | sha256 |"
+            echo "|---|---|---:|---:|---|"
+            jq -r '.images[] | [.file, .format, (.blobOffset|tostring), .sha256] | @tsv' firmware/dist/manifest.json |
+              while IFS=$'\t' read -r file fmt off sha; do
+                echo "| $file | $fmt | $(stat -c %s "firmware/dist/$file") | $off | \`${sha:0:16}…\` |"
+              done
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: firmware-dist
+          path: firmware/dist/
+          if-no-files-found: error
+          retention-days: 3

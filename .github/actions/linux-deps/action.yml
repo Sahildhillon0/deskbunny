@@ -1,0 +1,15 @@
+name: Tauri Linux build deps
+description: Install the system packages Tauri v2 and serialport need on Ubuntu (see docs/ARCHITECTURE.md, Build conventions).
+runs:
+  using: composite
+  steps:
+    - name: apt install
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends \
+          libwebkit2gtk-4.1-dev \
+          libudev-dev \
+          libayatana-appindicator3-dev \
+          librsvg2-dev \
+          patchelf

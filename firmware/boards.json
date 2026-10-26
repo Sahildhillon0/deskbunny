@@ -1,0 +1,217 @@
+[
+  {
+    "id": "uno",
+    "name": "Uno R3",
+    "fqbn": "arduino:avr:uno",
+    "mcu": "atmega328p",
+    "protocol": "stk500v1",
+    "baud": [
+      115200
+    ],
+    "touch1200": false,
+    "image": "atmega328p.hex",
+    "usb": [
+      {
+        "vid": "2341",
+        "pid": "0043",
+        "role": "app"
+      },
+      {
+        "vid": "2341",
+        "pid": "0001",
+        "role": "app"
+      },
+      {
+        "vid": "2A03",
+        "pid": "0043",
+        "role": "app"
+      }
+    ]
+  },
+  {
+    "id": "nano",
+    "name": "Nano (new bootloader)",
+    "fqbn": "arduino:avr:nano:cpu=atmega328",
+    "mcu": "atmega328p",
+    "protocol": "stk500v1",
+    "baud": [
+      115200,
+      57600
+    ],
+    "touch1200": false,
+    "image": "atmega328p.hex",
+    "usb": [
+      {
+        "vid": "1A86",
+        "pid": "7523",
+        "role": "app"
+      },
+      {
+        "vid": "0403",
+        "pid": "6001",
+        "role": "app"
+      }
+    ]
+  },
+  {
+    "id": "nano_old",
+    "name": "Nano (old bootloader)",
+    "fqbn": "arduino:avr:nano:cpu=atmega328old",
+    "mcu": "atmega328p",
+    "protocol": "stk500v1",
+    "baud": [
+      57600
+    ],
+    "touch1200": false,
+    "image": "atmega328p.hex",
+    "usb": [
+      {
+        "vid": "1A86",
+        "pid": "7523",
+        "role": "app"
+      },
+      {
+        "vid": "0403",
+        "pid": "6001",
+        "role": "app"
+      }
+    ]
+  },
+  {
+    "id": "pro_mini",
+    "name": "Pro Mini 5V",
+    "fqbn": "arduino:avr:pro:cpu=16MHzatmega328",
+    "mcu": "atmega328p",
+    "protocol": "stk500v1",
+    "baud": [
+      57600
+    ],
+    "touch1200": false,
+    "image": "atmega328p.hex",
+    "usb": [
+      {
+        "vid": "0403",
+        "pid": "6001",
+        "role": "app"
+      },
+      {
+        "vid": "1A86",
+        "pid": "7523",
+        "role": "app"
+      }
+    ]
+  },
+  {
+    "id": "mega",
+    "name": "Mega 2560",
+    "fqbn": "arduino:avr:mega:cpu=atmega2560",
+    "mcu": "atmega2560",
+    "protocol": "stk500v2",
+    "baud": [
+      115200
+    ],
+    "touch1200": false,
+    "image": "atmega2560.hex",
+    "usb": [
+      {
+        "vid": "2341",
+        "pid": "0042",
+        "role": "app"
+      },
+      {
+        "vid": "2341",
+        "pid": "0010",
+        "role": "app"
+      }
+    ]
+  },
+  {
+    "id": "leonardo",
+    "name": "Leonardo",
+    "fqbn": "arduino:avr:leonardo",
+    "mcu": "atmega32u4",
+    "protocol": "avr109",
+    "baud": [
+      57600
+    ],
+    "touch1200": true,
+    "image": "atmega32u4.hex",
+    "usb": [
+      {
+        "vid": "2341",
+        "pid": "8036",
+        "role": "app"
+      },
+      {
+        "vid": "2341",
+        "pid": "0036",
+        "role": "bootloader"
+      }
+    ]
+  },
+  {
+    "id": "micro",
+    "name": "Micro",
+    "fqbn": "arduino:avr:micro",
+    "mcu": "atmega32u4",
+    "protocol": "avr109",
+    "baud": [
+      57600
+    ],
+    "touch1200": true,
+    "image": "atmega32u4.hex",
+    "usb": [
+      {
+        "vid": "2341",
+        "pid": "8037",
+        "role": "app"
+      },
+      {
+        "vid": "2341",
+        "pid": "0037",
+        "role": "bootloader"
+      }
+    ]
+  },
+  {
+    "id": "uno_r4_minima",
+    "name": "Uno R4 Minima",
+    "fqbn": "arduino:renesas_uno:minima",
+    "mcu": "ra4m1",
+    "protocol": "dfu",
+    "baud": [],
+    "touch1200": true,
+    "image": "uno_r4_minima.bin",
+    "usb": [
+      {
+        "vid": "2341",
+        "pid": "0069",
+        "role": "app"
+      },
+      {
+        "vid": "2341",
+        "pid": "0369",
+        "role": "bootloader"
+      }
+    ]
+  },
+  {
+    "id": "uno_r4_wifi",
+    "name": "Uno R4 WiFi",
+    "fqbn": "arduino:renesas_uno:unor4wifi",
+    "mcu": "ra4m1",
+    "protocol": "samba",
+    "baud": [
+      230400
+    ],
+    "touch1200": true,
+    "image": "uno_r4_wifi.bin",
+    "usb": [
+      {
+        "vid": "2341",
+        "pid": "1002",
+        "role": "app"
+      }
+    ]
+  }
+]

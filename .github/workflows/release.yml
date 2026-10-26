@@ -1,0 +1,190 @@
+# Tag vX.Y.Z -> draft GitHub release with installers for all three OSes plus the
+# raw firmware images. Review and publish the draft by hand. See docs/RELEASING.md.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to (re)build a draft release for, e.g. v0.1.0
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  NODE_VERSION: "22"
+  TAG: ${{ inputs.tag || github.ref_name }}
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+      - name: Tag matches app version
+        run: |
+          want="${TAG#v}"
+          conf=$(jq -r '.version // empty' app/src-tauri/tauri.conf.json)
+          pkg=$(jq -r '.version' app/package.json)
+          echo "tag=$want tauri.conf.json=${conf:-<from Cargo.toml>} package.json=$pkg"
+          if [ -n "$conf" ] && [ "$conf" != "$want" ]; then
+            echo "::error file=app/src-tauri/tauri.conf.json::version $conf does not match tag $TAG"; exit 1
+          fi
+          if [ "$pkg" != "$want" ]; then
+            echo "::error file=app/package.json::version $pkg does not match tag $TAG"; exit 1
+          fi
+
+  firmware:
+    needs: preflight
+    uses: ./.github/workflows/firmware.yml
+    with:
+      ref: ${{ inputs.tag || github.ref_name }}
+
+  build:
+    name: build (${{ matrix.name }})
+    needs: firmware
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux
+            os: ubuntu-22.04
+            args: ""
+          - name: windows
+            os: windows-latest
+            args: ""
+          - name: macos-universal
+            os: macos-latest
+            args: --target universal-apple-darwin
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: firmware-dist
+          path: firmware/dist
+
+      - if: runner.os == 'Linux'
+        uses: ./.github/actions/linux-deps
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ runner.os == 'macOS' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-${{ matrix.name }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - name: npm ci
+        working-directory: app
+        run: npm ci
+
+      # Signing is optional. Only secrets that are actually set are exported, because
+      # tauri treats a present-but-empty APPLE_CERTIFICATE / APPLE_ID as "sign/notarize
+      # with this" and fails. With no secrets the build succeeds unsigned:
+      #  - macOS: unsigned .app/.dmg must be opened with right-click > Open the first
+      #    time (Gatekeeper), or `xattr -dr com.apple.quarantine DeskBunny.app`.
+      #  - Windows: SmartScreen shows "unknown publisher".
+      #  - Updater: no .sig files unless TAURI_SIGNING_PRIVATE_KEY is set.
+      - name: Export signing secrets that are set
+        shell: bash
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          vars=(TAURI_SIGNING_PRIVATE_KEY TAURI_SIGNING_PRIVATE_KEY_PASSWORD)
+          if [ "$RUNNER_OS" = macOS ]; then
+            vars+=(APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID)
+          fi
+          for v in "${vars[@]}"; do
+            if [ -n "${!v}" ]; then
+              eof="EOF_$(openssl rand -hex 8)"
+              { echo "$v<<$eof"; printf '%s\n' "${!v}"; echo "$eof"; } >> "$GITHUB_ENV"
+              echo "$v: set"
+            else
+              echo "$v: not set"
+            fi
+          done
+
+      # Windows Authenticode: import a base64 .pfx into the user store and point tauri
+      # at it with a --config overlay. Skipped (unsigned build) when the secret is empty.
+      - name: Import Windows signing certificate
+        id: wincert
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: |
+          if (-not $env:WINDOWS_CERTIFICATE) { Write-Host "WINDOWS_CERTIFICATE not set: building unsigned"; exit 0 }
+          $pfx = Join-Path $env:RUNNER_TEMP "cert.pfx"
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE))
+          $pw = ConvertTo-SecureString -String $env:WINDOWS_CERTIFICATE_PASSWORD -Force -AsPlainText
+          $cert = Import-PfxCertificate -FilePath $pfx -CertStoreLocation Cert:\CurrentUser\My -Password $pw
+          Remove-Item $pfx
+          $conf = (Join-Path $env:RUNNER_TEMP "tauri.sign.json") -replace '\\', '/'
+          @{ bundle = @{ windows = @{
+              certificateThumbprint = $cert.Thumbprint
+              digestAlgorithm = "sha256"
+              timestampUrl = "http://timestamp.digicert.com"
+          } } } | ConvertTo-Json -Depth 5 | Set-Content -Path $conf -Encoding utf8
+          "args=--config $conf" >> $env:GITHUB_OUTPUT
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: app
+          args: ${{ matrix.args }} ${{ steps.wincert.outputs.args }}
+          tagName: ${{ env.TAG }}
+          releaseName: DeskBunny v__VERSION__
+          releaseBody: See the assets below. Firmware images and manifest.json are attached for manual flashing.
+          releaseDraft: true
+          prerelease: false
+
+  firmware-assets:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: firmware-dist
+          path: firmware/dist
+      # The draft was created by tauri-action above; gh resolves drafts by tag.
+      - name: Attach firmware images to the draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          shopt -s nullglob
+          files=(firmware/dist/*.hex firmware/dist/*.bin firmware/dist/manifest.json)
+          ls -l "${files[@]}"
+          gh release upload "$TAG" "${files[@]}" --clobber --repo "$GITHUB_REPOSITORY"

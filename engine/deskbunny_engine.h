@@ -102,7 +102,8 @@ void db_face_encode(const db_face_t *face, uint8_t blob[DB_BLOB_SIZE]);
 void db_engine_init(db_engine_t *e, const db_face_t *face, uint32_t seed);
 
 /* Render the frame for absolute time now_ms (monotonic, starts near 0).
- * Clears and fully redraws fb. Deterministic for the same init + time sequence. */
+ * Clears and fully redraws fb. Deterministic for the same init + time sequence.
+ * DB_FLAG_INVERT and DB_FLAG_ROTATE180 are applied to fb here. */
 void db_engine_render(db_engine_t *e, uint32_t now_ms, uint8_t fb[DB_FB_SIZE]);
 
 #ifdef __cplusplus

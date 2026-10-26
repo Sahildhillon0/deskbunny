@@ -87,7 +87,10 @@ Moods: `0 neutral, 1 happy, 2 angry, 3 sad, 4 sleepy, 5 surprised, 6 love,
 7 suspicious, 8 excited, 9 bored, 10 scared, 11 dizzy`.
 
 If magic/version/CRC is bad, the firmware falls back to `db_face_default()`
-(neutral, blink + look_around + breathe) and shows it.
+(neutral, blink + look_around + breathe, name `DESKBUNNY`) and shows it.
+A blob with a valid CRC but out-of-range fields is clamped on decode (unknown
+mood/overlay -> 0, eye_w/eye_h -> 8..56, eye_r -> <= eye_w/2, eye_gap -> <= 40,
+speed -> 1..10, name lowercase -> uppercase, other characters -> space).
 
 ## Engine API
 
@@ -95,7 +98,13 @@ See `engine/deskbunny_engine.h`. Framebuffer is SSD1306 page layout:
 `fb[(y >> 3) * 128 + x]`, bit `(y & 7)`, 1 = lit. Engine output is
 deterministic for the same face, seed and timestamp sequence; the simulator
 and golden tests rely on this. Budget: engine state <= 96 bytes RAM, code
-<= 8 KB on AVR, a full render <= 15 ms on a 16 MHz ATmega328P.
+<= 12 KB on AVR (avr-gcc -Os; measured in CI), a full render <= 15 ms on a 16 MHz ATmega328P.
+
+`invert` and `rotate180` are applied to the framebuffer by
+`db_engine_render`, so hosts (the simulator) need not do anything. The
+firmware clears those two flag bits before `db_engine_init` and sets the panel
+instead (0xA7 invert, 0xA0/0xC0 instead of 0xA1/0xC8 for rotate180); the
+result is the same pixels.
 
 ## Firmware behaviour
 
@@ -103,7 +112,12 @@ and golden tests rely on this. Budget: engine state <= 96 bytes RAM, code
   RES 8. Init sequence from the original working sketch.
 - Loop: render at ~30 fps into a 1024-byte framebuffer, push all 8 pages.
 - Serial 115200: on boot prints `DESKBUNNY <fw_version> <board_id> <face name>`.
-  Replies the same line to `?\n`. The app uses this to verify a flash.
+  Replies the same line to `?\n` (`?\r\n` also works). The app uses this to
+  verify a flash. Boards sharing an image can't tell themselves apart, so
+  `<board_id>` is the image stem: `atmega328p`, `atmega2560`, `atmega32u4`,
+  `uno_r4_minima`, `uno_r4_wifi`. The face name may contain spaces (it is the
+  rest of the line) or be empty. Native-USB boards (Leonardo, Micro, R4
+  Minima) also print the line once when a host first opens the port.
 - No third-party libraries. Arduino core only.
 
 ## Boards (`firmware/boards.json`)
@@ -118,7 +132,22 @@ and golden tests rely on this. Budget: engine state <= 96 bytes RAM, code
 | `leonardo` | Leonardo | arduino:avr:leonardo | atmega32u4 | avr109 @57600, 1200-baud touch | hex | 2341:8036 / 2341:0036 |
 | `micro` | Micro | arduino:avr:micro | atmega32u4 | avr109 @57600, 1200-baud touch | hex | 2341:8037 / 2341:0037 |
 | `uno_r4_minima` | Uno R4 Minima | arduino:renesas_uno:minima | RA4M1 | DFU (USB, nusb), 1200-baud touch | bin | 2341:0069 / 2341:0369 |
-| `uno_r4_wifi` | Uno R4 WiFi | arduino:renesas_uno:unor4wifi | RA4M1 | SAM-BA (bossa) via 1200-baud touch | bin | 2341:1002 |
+| `uno_r4_wifi` | Uno R4 WiFi | arduino:renesas_uno:unor4wifi | RA4M1 | SAM-BA (bossa) @230400 via 1200-baud touch on the ESP32-S3 bridge (no re-enumeration) | bin | 2341:1002 |
+
+`boards.json` shape (array): `{ "id", "name", "fqbn", "mcu", "protocol":
+"stk500v1"|"stk500v2"|"avr109"|"dfu"|"samba", "baud": [115200, 57600],
+"touch1200": bool, "image": "atmega328p.hex", "usb": [{ "vid": "2341",
+"pid": "0043", "role": "app"|"bootloader" }] }`.
+
+`firmware/build.sh` (needs `arduino-cli` on PATH; installs missing cores
+itself) writes `firmware/dist/`: one image per distinct `image` value plus
+`manifest.json` = `{ "fwVersion": "0.1.0", "images": [{ "file", "format":
+"hex"|"bin", "sha256", "blobOffset" }], "boards": <copy of boards.json> }`.
+`blobOffset` is where `DB_FACE_BLOB` starts: for `.hex` the absolute address in
+the HEX address space (= flash address on AVR); for `.bin` the byte offset in
+the file (the R4 bootloader loads the `.bin` at flash 0x4000). The build fails unless the
+magic occurs exactly once in each image. The app bundles `firmware/dist/` as the
+Tauri resource directory `firmware/`.
 
 Nano / Uno / Pro Mini share one ATmega328P image (`atmega328p.hex`); only the
 upload baud differs. "Nano" auto-detect tries 115200, then 57600.
