@@ -298,6 +298,18 @@ impl Uploader for Dfu {
     }
 }
 
+/// (bmAttributes, wTransferSize) from the DFU functional descriptor (type 0x21),
+/// searched across the class descriptors of every alt setting of the interface.
+/// Falls back to (0, 64): 64 is the smallest valid full-speed EP0 size, and a
+/// block larger than the device buffer is stalled.
+fn dfu_functional(alts: &[Vec<Vec<u8>>]) -> (u8, u16) {
+    alts.iter()
+        .flatten()
+        .find(|b| b.len() >= 7 && b[1] == 0x21)
+        .map(|b| (b[2], u16::from_le_bytes([b[5], b[6]])))
+        .unwrap_or((0, 64))
+}
+
 /// Real USB access through nusb.
 pub struct NusbBackend;
 
@@ -406,20 +418,21 @@ impl DfuBackend for NusbBackend {
             .map_err(|e| FlashError::Usb(format!("Could not read the USB configuration: {e}")))?;
         let mut found = None;
         for iface in config.interfaces() {
-            for a in iface.alt_settings() {
-                if a.class() == 0xFE && a.subclass() == 0x01 && a.alternate_setting() == alt {
-                    let mut size = 2048u16;
-                    let mut attrs = 0u8;
-                    for d in a.descriptors() {
-                        let b = d.as_bytes();
-                        if d.descriptor_type() == 0x21 && b.len() >= 7 {
-                            attrs = b[2];
-                            size = u16::from_le_bytes([b[5], b[6]]);
-                        }
-                    }
-                    found = Some((a.interface_number(), size, attrs));
-                }
+            let alts: Vec<_> = iface.alt_settings().collect();
+            if !alts
+                .iter()
+                .any(|a| a.class() == 0xFE && a.subclass() == 0x01 && a.alternate_setting() == alt)
+            {
+                continue;
             }
+            // The functional descriptor follows only one alt setting (TinyUSB puts it
+            // after the last), so search them all.
+            let extra: Vec<Vec<Vec<u8>>> = alts
+                .iter()
+                .map(|a| a.descriptors().map(|d| d.as_bytes().to_vec()).collect())
+                .collect();
+            let (attrs, size) = dfu_functional(&extra);
+            found = Some((alts[0].interface_number(), size, attrs));
         }
         let (number, transfer_size, attrs) = found.ok_or_else(|| {
             FlashError::Usb("The device has no DFU interface; is it really an Uno R4 Minima in bootloader mode?".into())
@@ -606,6 +619,17 @@ mod tests {
         let img = crate::mock::test_image(0x4000, 1000);
         let e = up.upload("COM3", &img, &|_| {}).unwrap_err().to_string();
         assert!(e.contains("could not write memory"), "{e}");
+    }
+
+    #[test]
+    fn functional_descriptor_found_after_last_alt() {
+        // Uno R4 Minima bootloader (TinyUSB TUD_DFU_DESCRIPTOR): alt 0 and alt 1, with
+        // the functional descriptor (attrs 0x07, detach 1000 ms, 64-byte transfers)
+        // only after alt 1.
+        let func = vec![0x09, 0x21, 0x07, 0xE8, 0x03, 0x40, 0x00, 0x01, 0x01];
+        assert_eq!(dfu_functional(&[vec![], vec![func]]), (0x07, 64));
+        // No functional descriptor at all: never guess a size above 64.
+        assert_eq!(dfu_functional(&[vec![], vec![]]), (0, 64));
     }
 
     #[test]
