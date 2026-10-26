@@ -2,7 +2,7 @@
   import { onMount } from "svelte";
   import * as api from "../api";
   import { app } from "../state.svelte";
-  import type { Board, FlashProgress, FlashStage, Port } from "../types";
+  import type { Board, FlashProgress, FlashReport, FlashStage, Port } from "../types";
   import Icon from "./Icon.svelte";
 
   const STAGE_LABEL: Record<FlashStage, string> = {
@@ -17,7 +17,7 @@
   type Phase =
     | { kind: "idle" }
     | { kind: "flashing"; progress: FlashProgress }
-    | { kind: "success"; face: string; board: string; deviceLine: string | null }
+    | { kind: "success"; board: string; report: FlashReport }
     | { kind: "error"; message: string; hint: string };
 
   let ports = $state<Port[]>([]);
@@ -68,6 +68,7 @@
       return "This build doesn't include the firmware images. Run firmware/build.sh (needs arduino-cli), or use a release build.";
     if (/permission denied|access is denied|EACCES/i.test(msg))
       return "On Linux, add yourself to the dialout group (sudo usermod -aG dialout $USER), then log out and back in.";
+    if (/already running/i.test(msg)) return "Wait for the current upload to finish, then try again.";
     if (/busy|in use|already open/i.test(msg))
       return "Another program has the port open. Close any serial monitor or Arduino IDE, then retry.";
     if (/bootloader|sync|no response|timed? ?out/i.test(msg))
@@ -82,9 +83,7 @@
     phase = { kind: "flashing", progress: { stage: "reset", percent: 0, message: "Starting" } };
     try {
       const report = await api.flash(target.path, target.board.id, face);
-      let deviceLine = report?.deviceLine ?? null;
-      if (!deviceLine) deviceLine = await api.deviceInfo(target.path).catch(() => null);
-      phase = { kind: "success", face: face.name, board: target.board.name, deviceLine };
+      phase = { kind: "success", board: target.board.name, report };
     } catch (e) {
       const message = api.errorText(e);
       phase = { kind: "error", message, hint: hintFor(message) };
@@ -205,14 +204,21 @@
         </div>
       </div>
     {:else if phase.kind === "success"}
-      <div class="msg ok">
-        <Icon name="check" />
+      {@const r = phase.report}
+      <div class="msg" class:ok={r.deviceVerified} class:warn={!r.deviceVerified}>
+        <Icon name={r.deviceVerified ? "check" : "alert"} />
         <div>
-          <strong class="one-line" title={`${phase.face} is on your ${phase.board}`}>{phase.face} is on your {phase.board}</strong>
-          {#if phase.deviceLine}
-            <code class="device-line">{phase.deviceLine}</code>
-          {:else}
-            <span class="detail">Flashed, but the board didn't answer the check. If the face is showing, you're set.</span>
+          <strong class="one-line" title={`${r.faceName} is on your ${phase.board}`}>
+            {r.deviceVerified ? `${r.faceName} is on your ${phase.board}` : `Flashed ${r.faceName} to your ${phase.board}`}
+          </strong>
+          {#if r.deviceInfo}
+            <code class="device-line">{r.deviceInfo}</code>
+          {/if}
+          {#each r.warnings as w, i (i)}
+            <span class="detail">{w}</span>
+          {/each}
+          {#if !r.deviceInfo && !r.warnings.length}
+            <span class="detail">The board didn't answer the check. If the face is showing, you're set.</span>
           {/if}
         </div>
         <button class="btn ghost small" onclick={() => (phase = { kind: "idle" })}>Dismiss</button>
@@ -302,7 +308,7 @@
     }
   }
 
-  /* Ready, progress and success all fit in 56px; only an error panel grows the bar. */
+  /* Ready, progress and a clean success fit in 56px; errors and warnings grow the bar. */
   .status {
     min-width: 0;
     min-height: 56px;
@@ -441,6 +447,15 @@
 
   .msg.ok > :global(svg) {
     color: var(--ok);
+  }
+
+  .msg.warn {
+    border-color: rgba(232, 200, 122, 0.3);
+    background: rgba(232, 200, 122, 0.05);
+  }
+
+  .msg.warn > :global(svg) {
+    color: #e8c87a;
   }
 
   .msg.error {

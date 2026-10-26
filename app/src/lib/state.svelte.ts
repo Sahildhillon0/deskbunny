@@ -53,7 +53,11 @@ class AppState {
     const face = $state.snapshot(this.face);
     await api.saveFace(face);
     this.saved = await api.listSavedFaces();
-    this.source = { kind: "saved", name: face.name };
+    // The backend normalises names; follow whatever it stored.
+    const name = face.name.trim();
+    const stored = this.saved.find((f) => f.name === name)?.name ?? name;
+    if (this.face.name !== stored) this.face.name = stored;
+    this.source = { kind: "saved", name: stored };
   }
 
   async remove(name: string) {

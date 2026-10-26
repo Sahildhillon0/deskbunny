@@ -62,13 +62,14 @@ export interface Board {
   protocol: string;
 }
 
+/** Absent keys are omitted, never null. vid/pid are 4-digit uppercase hex ("2341"). */
 export interface Port {
   path: string;
-  vid?: string | null;
-  pid?: string | null;
-  product?: string | null;
-  serialNumber?: string | null;
-  guessedBoard?: string | null;
+  vid?: string;
+  pid?: string;
+  product?: string;
+  serialNumber?: string;
+  guessedBoard?: string;
 }
 
 export type FlashStage = "reset" | "sync" | "erase" | "write" | "verify" | "done";
@@ -79,13 +80,25 @@ export interface FlashProgress {
   message: string;
 }
 
-/** Shape not pinned down in ARCHITECTURE.md; every field is read defensively. */
 export interface FlashReport {
-  port?: string;
-  boardId?: string;
-  bytesWritten?: number;
-  durationMs?: number;
-  deviceLine?: string | null;
+  protocol: string;
+  /** Where the bootloader answered; may differ from the requested port after a 1200-baud touch. */
+  port: string;
+  baud: number | null;
+  signature: string | null;
+  bytesWritten: number;
+  /** Flash read back and compared (false for DFU). */
+  verified: boolean;
+  durationMs: number;
+  warnings: string[];
+  boardId: string;
+  faceName: string;
+  fwVersion: string;
+  blobAddress: number;
+  /** The `DESKBUNNY ...` line read after the upload. */
+  deviceInfo: string | null;
+  /** deviceInfo ends with faceName. */
+  deviceVerified: boolean;
 }
 
 export const NAME_MAX = 12;
@@ -148,7 +161,7 @@ export function normalizeFace(input: unknown): FaceDef {
     eyeH,
     eyeR: clampInt(o.eyeR, 0, Math.floor(eyeW / 2), d.eyeR),
     eyeGap: clampInt(o.eyeGap, 0, 40, d.eyeGap),
-    eyeY: clampInt(o.eyeY, -20, 20, d.eyeY),
+    eyeY: clampInt(o.eyeY, -128, 127, d.eyeY),
     blink: bool("blink"),
     lookAround: bool("lookAround"),
     breathe: bool("breathe"),

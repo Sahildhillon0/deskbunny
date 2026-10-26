@@ -160,17 +160,35 @@ Later: Nano Every (UPDI), Nano 33 IoT (SAM-BA), ESP32 boards.
 cyclops, invert, rotate180, mouth, blinkMin, blinkMax, lookMin, lookMax,
 lookX, lookY, speed, contrast, overlay, seed }` (booleans for flag bits,
 `mood` and `overlay` as string enums, e.g. `"angry"`, `"hearts"`).
+Mood strings are the lowercase enum names above (`"neutral"` .. `"dizzy"`).
+Overlay strings: `"none" | "hearts" | "zzz" | "sweat" | "anger" | "tears" |
+"sparkles" | "question"`. Numbers are the blob's byte types (`eyeY` is -128..127,
+everything else 0..255); the backend clamps every field into its documented range
+and normalises `name` (uppercase, unsupported characters -> space, max 12) before
+encoding, simulating or flashing. `save_face` rejects empty or invalid names.
 
 Commands:
 - `list_presets() -> FaceDef[]`
 - `list_boards() -> Board[]` where `Board = { id, name, mcu, protocol }`
+  (from the bundled manifest; falls back to a built-in copy of the table)
 - `list_ports() -> Port[]` where `Port = { path, vid?, pid?, product?, serialNumber?, guessedBoard? }`
+  (`vid`/`pid` are 4-digit uppercase hex strings like `"2341"`; absent keys are
+  omitted, not `null`; on macOS only `/dev/cu.*` ports are listed)
 - `sim_create(face: FaceDef, seed: u32) -> u32` (sim id)
 - `sim_set_face(id: u32, face: FaceDef)`
 - `sim_frame(id: u32, tMs: u32) -> ArrayBuffer` (1024 bytes, page layout; returned as raw `tauri::ipc::Response`)
 - `sim_drop(id: u32)`
 - `flash(port: string, boardId: string, face: FaceDef) -> FlashReport`
   emits `flash-progress` events `{ stage: "reset"|"sync"|"erase"|"write"|"verify"|"done", percent, message }`
+  (`percent` 0..100 overall and never decreasing). Only one flash runs at a time.
+  `FlashReport = { protocol, port, baud: number|null, signature: string|null,
+  bytesWritten, verified, durationMs, warnings: string[], boardId, faceName,
+  fwVersion, blobAddress, deviceInfo: string|null, deviceVerified }`.
+  `port` is where the bootloader answered (may differ from the requested port
+  after a 1200-baud touch). `verified` = flash read back and compared (false for
+  DFU, whose bootloader cannot read back). `deviceInfo` is the `DESKBUNNY ...`
+  line read after the upload; `deviceVerified` = its face-name field equals
+  `faceName`. A missing banner is a warning, not an error.
 - `device_info(port: string) -> string | null` (sends `?\n`, reads the DESKBUNNY line)
 - `list_saved_faces() -> FaceDef[]`, `save_face(face)`, `delete_face(name)` (app data dir, JSON)
 - `encode_face(face) -> number[]` (64 bytes, for export/debug)

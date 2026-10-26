@@ -68,39 +68,73 @@ export async function onFlashProgress(cb: ProgressCb): Promise<() => void> {
 
 const emit = (p: FlashProgress) => progressListeners.forEach((cb) => cb(p));
 
-// Add `?flasherror` to the dev URL to see the error panel.
+// Firmware image stem per board (the serial banner reports this, not the board id).
+const IMAGE_STEM: Record<string, string> = {
+  uno: "atmega328p",
+  nano: "atmega328p",
+  nano_old: "atmega328p",
+  pro_mini: "atmega328p",
+  mega: "atmega2560",
+  leonardo: "atmega32u4",
+  micro: "atmega32u4",
+  uno_r4_minima: "ra4m1_minima",
+  uno_r4_wifi: "ra4m1_wifi",
+};
+
+let flashing = false;
+
+// Add `?flasherror` to the dev URL to see the error panel, `?nobanner` for a
+// flash that succeeds without the DESKBUNNY reply.
 export async function flash(port: string, boardId: string, face: FaceDef): Promise<FlashReport> {
-  const started = performance.now();
-  emit({ stage: "reset", percent: 0, message: `Resetting board on ${port}` });
-  await delay(400);
-  emit({ stage: "sync", percent: 4, message: "Syncing with bootloader" });
-  await delay(500);
-  if (location.search.includes("flasherror")) {
-    throw `No response from bootloader on ${port}. Is this an old-bootloader Nano? Try 'Nano (old bootloader)'.`;
+  if (flashing) throw "Another upload is already running.";
+  flashing = true;
+  try {
+    const started = performance.now();
+    emit({ stage: "reset", percent: 0, message: `Resetting board on ${port}` });
+    await delay(400);
+    emit({ stage: "sync", percent: 4, message: "Syncing with bootloader" });
+    await delay(500);
+    if (location.search.includes("flasherror")) {
+      throw `No response from bootloader on ${port}. Is this an old-bootloader Nano? Try 'Nano (old bootloader)'.`;
+    }
+    emit({ stage: "erase", percent: 8, message: "Erasing" });
+    await delay(300);
+    for (let p = 10; p <= 80; p += 5) {
+      emit({ stage: "write", percent: p, message: `Writing ${Math.round(((p - 10) / 70) * 9216)} / 9216 bytes` });
+      await delay(110);
+    }
+    for (let p = 82; p <= 98; p += 4) {
+      emit({ stage: "verify", percent: p, message: "Verifying" });
+      await delay(90);
+    }
+    emit({ stage: "done", percent: 100, message: "Done" });
+    const name = sanitizeName(face.name);
+    const banner = !location.search.includes("nobanner");
+    const deviceInfo = banner ? `DESKBUNNY 0.1.0 ${IMAGE_STEM[boardId] ?? boardId} ${name}` : null;
+    return {
+      protocol: BOARDS.find((b) => b.id === boardId)?.protocol ?? "stk500v1",
+      port,
+      baud: 115200,
+      signature: "1e950f",
+      bytesWritten: 9216,
+      verified: true,
+      durationMs: Math.round(performance.now() - started),
+      warnings: banner ? [] : [`Flashed, but no DESKBUNNY reply from ${port}. If the face is showing, you're set.`],
+      boardId,
+      faceName: name,
+      fwVersion: "0.1.0",
+      blobAddress: 0x1f40,
+      deviceInfo,
+      deviceVerified: !!deviceInfo && deviceInfo.endsWith(name),
+    };
+  } finally {
+    flashing = false;
   }
-  emit({ stage: "erase", percent: 8, message: "Erasing" });
-  await delay(300);
-  for (let p = 10; p <= 80; p += 5) {
-    emit({ stage: "write", percent: p, message: `Writing ${Math.round(((p - 10) / 70) * 9216)} / 9216 bytes` });
-    await delay(110);
-  }
-  for (let p = 82; p <= 98; p += 4) {
-    emit({ stage: "verify", percent: p, message: "Verifying" });
-    await delay(90);
-  }
-  emit({ stage: "done", percent: 100, message: "Done" });
-  return {
-    port,
-    boardId,
-    bytesWritten: 9216,
-    durationMs: Math.round(performance.now() - started),
-    deviceLine: `DESKBUNNY 0.1.0 ${boardId} ${face.name}`,
-  };
 }
 
 export async function deviceInfo(port: string): Promise<string | null> {
   await delay(200);
-  return port ? "DESKBUNNY 0.1.0 uno WATCHING" : null;
+  return port ? "DESKBUNNY 0.1.0 atmega328p WATCHING" : null;
 }
 
 // ---------------------------------------------------------------- saved faces
@@ -129,8 +163,8 @@ export async function listSavedFaces(): Promise<FaceDef[]> {
 }
 
 export async function saveFace(face: FaceDef): Promise<void> {
-  const name = sanitizeName(face.name);
-  if (!name.trim()) throw "Give the face a name first (A-Z, 0-9, space).";
+  const name = face.name.trim();
+  if (!name || name !== sanitizeName(name)) throw "Face names use A-Z, 0-9 and spaces, up to 12 characters.";
   const rest = readSaved().filter((f) => f.name !== name);
   writeSaved([...rest, { ...face, name }].sort((a, b) => a.name.localeCompare(b.name)));
 }

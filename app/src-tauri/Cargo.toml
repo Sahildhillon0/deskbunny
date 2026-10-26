@@ -1,0 +1,22 @@
+[package]
+name = "deskbunny-app"
+description = "DeskBunny desktop app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "deskbunny_app_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+deskbunny-core.workspace = true
+deskbunny-flash.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tauri = { version = "2", features = [] }
+sha2 = "0.10"
+tauri-plugin-dialog = "2"
