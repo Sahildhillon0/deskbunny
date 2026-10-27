@@ -110,6 +110,17 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      - name: Check the R4 driver still matches its signed catalog
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          python - <<'EOF'
+          import hashlib, pathlib
+          d = pathlib.Path("app/src-tauri/drivers/windows")
+          digest = hashlib.sha1((d / "renesas.inf").read_bytes()).digest()
+          assert digest in (d / "renesas.cat").read_bytes(), "renesas.inf no longer matches renesas.cat (line endings changed at checkout?)"
+          EOF
+
       - uses: actions/download-artifact@v8
         with:
           name: firmware-dist
