@@ -784,7 +784,7 @@ dependencies = [
 
 [[package]]
 name = "deskbunny-app"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "deskbunny-core",
  "deskbunny-flash",
@@ -800,7 +800,7 @@ dependencies = [
 
 [[package]]
 name = "deskbunny-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "cc",
  "serde",
@@ -810,7 +810,7 @@ dependencies = [
 
 [[package]]
 name = "deskbunny-flash"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "nusb",
  "serde",
