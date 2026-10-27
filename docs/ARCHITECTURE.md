@@ -239,8 +239,9 @@ release; updates are signed with the minisign key whose public half is
 `TAURI_SIGNING_PRIVATE_KEY` repo secret).
 - `app_version() -> string`
 - `update_check() -> UpdateInfo | null`, `UpdateInfo = { version, currentVersion,
-  date: string|null, notes: string|null }`; `null` when up to date. Rejects with
-  a readable error when offline or the release has no `latest.json`.
+  date: string|null, notes: string|null }`; `null` when up to date, including
+  when the latest release has no `latest.json` (published before updates, or
+  unsigned). Rejects with a readable error only when GitHub can't be reached.
 - `update_install()`: downloads and installs the update found by the last
   `update_check`, emitting `update-progress` events `{ downloaded, total:
   number|null }`, then restarts the app (never resolves on success).
