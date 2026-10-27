@@ -15,7 +15,9 @@ need the Arduino IDE.
   Leonardo, Micro, Uno R4 Minima, Uno R4 WiFi.
 - **Display driver without a library:** bit-banged SPI on pins CLK 13,
   MOSI 11, CS 10, DC 9, RES 8.
-- **Windows, macOS and Linux**, with a first-run setup guide.
+- **Mood cycle:** loop through moods you pick, in order or at random, with a
+  blink at every change.
+- **Windows, macOS and Linux**, with a first-run setup guide and in-app updates.
 
 ## Get started
 
@@ -35,8 +37,9 @@ bash firmware/build.sh                       # firmware images (needs arduino-cl
 ```
 
 CI builds the firmware and installers for all three platforms on every push.
-To publish a new version on the Releases page, run
-`scripts/bump-version.sh X.Y.Z` and push to `main`; see
+Every green push to `main` publishes the next patch version on the Releases
+page (`[minor]` or `[major]` in the commit message for bigger steps), and the
+app offers it through its update button; see
 [docs/RELEASING.md](docs/RELEASING.md).
 
 ## Layout
@@ -48,4 +51,5 @@ To publish a new version on the Releases page, run
 | `crates/deskbunny-core` | Rust bindings to the engine, face format, presets |
 | `crates/deskbunny-flash` | Firmware patching and upload protocols |
 | `app/` | Tauri v2 app (Svelte 5 frontend) |
+| `hardware/enclosure/` | 3D-printable snap-fit case for a Nano: Clawd on a chair, OLED flush in its face |
 | `docs/ARCHITECTURE.md` | How the parts fit together and the contracts between them |
