@@ -50,5 +50,16 @@
         "depends": []
       }
     }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDMyNTM1MTQ5QkFCNkE5NjYKUldSbXFiYTZTVkZUTWsraGxjWGhlRitIOVFFZVBnSWxTTUN2ZTFQWEpZenNHMlRkSkMwQ01YaS8K",
+      "endpoints": [
+        "https://github.com/Sahildhillon0/deskbunny/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
   }
 }

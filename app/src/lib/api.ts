@@ -3,7 +3,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import type { Board, FaceDef, FlashProgress, FlashReport, Port, SetupStatus } from "./types";
+import type { Board, FaceDef, FlashProgress, FlashReport, Port, SetupStatus, UpdateInfo, UpdateProgress } from "./types";
 
 // Loaded lazily so the mock never ships in the Tauri code path.
 const mock = () => import("./mock");
@@ -104,3 +104,24 @@ export const setupFinish = (): Promise<void> =>
 
 export const setupOpenLink = (id: string): Promise<void> =>
   isTauri ? invoke<void>("setup_open_link", { id }) : mock().then((m) => m.setupOpenLink(id));
+
+// ---------------------------------------------------------------- updates
+
+export const appVersion = (): Promise<string> =>
+  isTauri ? invoke<string>("app_version") : mock().then((m) => m.appVersion());
+
+/** Resolves to the newer release, or null when this is the latest. */
+export const updateCheck = (): Promise<UpdateInfo | null> =>
+  isTauri ? invoke<UpdateInfo | null>("update_check") : mock().then((m) => m.updateCheck());
+
+/** Downloads, installs and restarts; only ever settles by rejecting. */
+export const updateInstall = (): Promise<void> =>
+  isTauri ? invoke<void>("update_install") : mock().then((m) => m.updateInstall());
+
+export function onUpdateProgress(cb: (p: UpdateProgress) => void): Promise<() => void> {
+  if (!isTauri) return mock().then((m) => m.onUpdateProgress(cb));
+  return listen<UpdateProgress>("update-progress", (ev) => cb(ev.payload));
+}
+
+export const updateOpenReleases = (): Promise<void> =>
+  isTauri ? invoke<void>("update_open_releases") : mock().then((m) => m.updateOpenReleases());

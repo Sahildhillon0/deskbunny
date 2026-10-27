@@ -1,30 +1,37 @@
 # Publishes a GitHub release with installers for all three OSes plus the raw
 # firmware images, so users can download straight from the Releases page.
 #
-# Runs on every push to main, but only releases when the app version
-# (app/src-tauri/tauri.conf.json) has no published release yet: bump the
-# version with scripts/bump-version.sh and push to ship a new one. Pushing a
-# vX.Y.Z tag or running it by hand works too. See docs/RELEASING.md.
+# Runs every time CI finishes green on main, and every run ships a new version:
+# the patch number goes up by one (0.1.0 -> 0.1.1). Put [minor] or [major] in
+# the commit message (or pick it when running by hand) for 0.2.0 / 1.0.0, and
+# [skip release] to not release that push. A version already set higher by
+# scripts/bump-version.sh wins. The bump is committed back to main as
+# "release: vX.Y.Z". See docs/RELEASING.md.
 #
 # The release stays a draft until every installer and firmware file is
 # attached, then is published as Latest, so a failed build never goes public.
+# Installers carry updater signatures and latest.json, which the app's
+# "Check for updates" reads.
 name: Release
 
 on:
-  push:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
     branches: [main]
-    tags: ["v*"]
   workflow_dispatch:
     inputs:
-      ref:
-        description: Branch, tag or commit to release (defaults to the selected branch)
-        required: false
-        type: string
+      bump:
+        description: Which part of the version to raise
+        required: true
+        default: patch
+        type: choice
+        options: [patch, minor, major]
 
 permissions:
   contents: read
 
-# One release run at a time; a later push waits and then sees the release exists.
+# One release run at a time; a later run waits and then bumps from this release.
 concurrency:
   group: release
   cancel-in-progress: false
@@ -35,9 +42,13 @@ env:
 
 jobs:
   preflight:
+    # Only green CI runs of pushes (not pull requests) release.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
     runs-on: ubuntu-latest
     permissions:
-      contents: write # creates the draft release
+      contents: write # pushes the version bump, creates the draft release
     outputs:
       release: ${{ steps.plan.outputs.release }}
       tag: ${{ steps.plan.outputs.tag }}
@@ -46,38 +57,66 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ inputs.ref || github.sha }}
+          ref: main
+          fetch-depth: 0
 
-      - name: Decide whether to release
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Pick the version and commit the bump
         id: plan
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REF_TYPE: ${{ github.ref_type }}
-          REF_NAME: ${{ github.ref_name }}
+          EVENT: ${{ github.event_name }}
+          INPUT_BUMP: ${{ inputs.bump }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          MESSAGE: ${{ github.event.workflow_run.head_commit.message }}
         run: |
+          if [ "$EVENT" = workflow_run ] && [ "$(git rev-parse HEAD)" != "$HEAD_SHA" ]; then
+            echo "::notice::main has moved past $HEAD_SHA; the newer commit's CI run releases it."
+            echo "release=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          level=${INPUT_BUMP:-patch}
+          case "$MESSAGE" in
+            *"[skip release]"*) echo "::notice::[skip release] in the commit message."
+                                echo "release=false" >> "$GITHUB_OUTPUT"; exit 0 ;;
+            *"[major]"*) level=major ;;
+            *"[minor]"*) level=minor ;;
+          esac
+
           conf=$(jq -r .version app/src-tauri/tauri.conf.json)
+          latest=$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" -q .tag_name 2>/dev/null || true)
+          latest=${latest#v}
+          [ -n "$latest" ] || latest=0.0.0
+          IFS=. read -r major minor patch <<< "$latest"
+          case "$level" in
+            major) next="$((major + 1)).0.0" ;;
+            minor) next="$major.$((minor + 1)).0" ;;
+            *)     next="$major.$minor.$((patch + 1))" ;;
+          esac
+          # A version already raised by hand (or by a failed earlier run) is kept.
+          version=$(printf '%s\n%s\n' "$next" "$conf" | sort -V | tail -n1)
+          echo "latest release $latest, $level bump -> $next, source says $conf: releasing $version"
+
+          if [ "$version" != "$conf" ]; then
+            scripts/bump-version.sh "$version"
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git commit -qam "release: v$version [skip ci]"
+            git push origin HEAD:main
+          fi
+
           pkg=$(jq -r .version app/package.json)
           cargo=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
           fw=$(sed -n 's/^#define DB_FW_VERSION "\(.*\)"/\1/p' firmware/deskbunny/deskbunny.ino)
-          echo "tauri.conf.json=$conf package.json=$pkg Cargo.toml=$cargo firmware=$fw"
           for v in "$pkg" "$cargo" "$fw"; do
-            if [ "$v" != "$conf" ]; then
-              echo "::error::Version numbers disagree. Run scripts/bump-version.sh $conf and push again."; exit 1
+            if [ "$v" != "$version" ]; then
+              echo "::error::Version numbers disagree (package.json $pkg, Cargo.toml $cargo, firmware $fw). Run scripts/bump-version.sh $version and push again."; exit 1
             fi
           done
-          tag="v$conf"
-          if [ "$REF_TYPE" = tag ] && [ "$REF_NAME" != "$tag" ]; then
-            echo "::error::Tag $REF_NAME does not match the app version $conf."; exit 1
-          fi
-          published=$(gh api "repos/$GITHUB_REPOSITORY/releases" --paginate \
-            -q ".[] | select(.tag_name == \"$tag\" and .draft == false) | .id")
-          if [ -n "$published" ]; then
-            echo "::notice::$tag is already released. Bump the version (scripts/bump-version.sh) to release again."
-            echo "release=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "release=true" >> "$GITHUB_OUTPUT"
-          fi
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "release=true" >> "$GITHUB_OUTPUT"
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       # Reuses the draft a failed earlier run left behind for the same version.
@@ -184,7 +223,8 @@ jobs:
       #  - macOS: unsigned .app/.dmg must be opened with right-click > Open the first
       #    time (Gatekeeper), or `xattr -dr com.apple.quarantine DeskBunny.app`.
       #  - Windows: SmartScreen shows "unknown publisher".
-      #  - Updater: no .sig files unless TAURI_SIGNING_PRIVATE_KEY is set.
+      #  - Updater: no .sig files or latest.json unless TAURI_SIGNING_PRIVATE_KEY is set,
+      #    so the in-app update check finds nothing for that release.
       - name: Export signing secrets that are set
         shell: bash
         env:
@@ -210,6 +250,13 @@ jobs:
               echo "$v: not set"
             fi
           done
+          # Updater bundles (.sig, .app.tar.gz, latest.json) need the key; tauri.conf.json
+          # leaves them off so CI and local builds work without it.
+          if [ -n "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            echo 'TAURI_CONFIG={"bundle":{"createUpdaterArtifacts":true}}' >> "$GITHUB_ENV"
+          else
+            echo "::warning::TAURI_SIGNING_PRIVATE_KEY is not set: this release cannot be installed from the app's update button."
+          fi
 
       # Windows Authenticode: import a base64 .pfx into the user store and point tauri
       # at it with a --config overlay. Skipped (unsigned build) when the secret is empty.

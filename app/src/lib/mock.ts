@@ -3,7 +3,7 @@
 // rough JS approximation for layout work; the real app always renders with the
 // C engine over IPC. Never import this directly: go through ./api.ts.
 
-import { defaultFace, normalizeFace, sanitizeName, type Board, type FaceDef, type FlashProgress, type FlashReport, type Mood, type Port, type SetupStatus } from "./types";
+import { MOODS, defaultFace, normalizeFace, sanitizeName, type Board, type FaceDef, type FlashProgress, type FlashReport, type Mood, type Port, type SetupStatus, type UpdateInfo, type UpdateProgress } from "./types";
 
 const delay = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
@@ -22,6 +22,8 @@ const PRESET_SPECS: [string, Mood, Partial<FaceDef>][] = [
   ["MEH", "bored", { speed: 3, lookX: 12 }],
   ["SPOOKED", "scared", { overlay: "sweat", speed: 8 }],
   ["DIZZY", "dizzy", { overlay: "question" }],
+  ["MOODY", "neutral", { mouth: true, cycle: "random", cycleSeconds: 8 }],
+  ["MY DAY", "neutral", { mouth: true, cycle: "sequence", cycleSeconds: 12, cycleMoods: ["neutral", "happy", "excited", "bored", "sleepy"] }],
 ];
 
 export async function listPresets(): Promise<FaceDef[]> {
@@ -303,8 +305,29 @@ const ANGER = ["#.#", "###", "#.#"];
 const SPARK = ["..#..", "..#..", "#####", "..#..", "..#.."];
 const QUESTION = [".###.", "#...#", "...#.", "..#..", ".....", "..#.."];
 
-function renderMock(sim: Sim, tMs: number, fb: Uint8Array) {
+const MOOD_OVERLAY: Partial<Record<Mood, FaceDef["overlay"]>> = {
+  angry: "anger",
+  sad: "tears",
+  sleepy: "zzz",
+  love: "hearts",
+  suspicious: "question",
+  excited: "sparkles",
+  scared: "sweat",
+};
+
+/** The face with the mood cycle applied at tMs (no closed-eye transition in the mock). */
+function cycledFace(sim: Sim, tMs: number): FaceDef {
   const f = sim.face;
+  if (f.cycle === "off") return f;
+  const list: readonly Mood[] = f.cycleMoods.length ? f.cycleMoods : MOODS;
+  const k = Math.floor(tMs / (Math.max(1, f.cycleSeconds) * 1000));
+  const mood =
+    f.cycle === "sequence" ? list[k % list.length] : k === 0 ? f.mood : list[Math.floor(rand(k + sim.seed * 31) * list.length)];
+  return { ...f, mood, overlay: f.cycleOverlay ? (MOOD_OVERLAY[mood] ?? "none") : f.overlay };
+}
+
+function renderMock(sim: Sim, tMs: number, fb: Uint8Array) {
+  const f = cycledFace(sim, tMs);
   const c = new Canvas1(fb);
   const t = (tMs * f.speed) / 5;
   const salt = sim.seed * 7919 + f.seed;
@@ -540,4 +563,37 @@ export async function setupFinish(): Promise<void> {
 
 export async function setupOpenLink(id: string): Promise<void> {
   console.info("[mock] open link", id);
+}
+
+// ---------------------------------------------------------------- updates
+
+// Add `?update` to the dev URL to see the update dialog.
+export async function appVersion(): Promise<string> {
+  return "0.1.0";
+}
+
+export async function updateCheck(): Promise<UpdateInfo | null> {
+  await delay(500);
+  if (!location.search.includes("update")) return null;
+  return { version: "0.1.1", currentVersion: "0.1.0", date: "2026-10-27", notes: "Mood cycle animation and in-app updates." };
+}
+
+const updateListeners = new Set<(p: UpdateProgress) => void>();
+
+export async function onUpdateProgress(cb: (p: UpdateProgress) => void): Promise<() => void> {
+  updateListeners.add(cb);
+  return () => updateListeners.delete(cb);
+}
+
+export async function updateInstall(): Promise<void> {
+  const total = 8_000_000;
+  for (let d = 0; d <= total; d += 400_000) {
+    await delay(60);
+    updateListeners.forEach((cb) => cb({ downloaded: d, total }));
+  }
+  throw "The browser preview cannot install updates.";
+}
+
+export async function updateOpenReleases(): Promise<void> {
+  window.open("https://github.com/Sahildhillon0/deskbunny/releases/latest", "_blank");
 }

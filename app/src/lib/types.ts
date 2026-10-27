@@ -28,6 +28,12 @@ export const OVERLAYS = [
 ] as const;
 export type Overlay = (typeof OVERLAYS)[number];
 
+export const CYCLES = ["off", "sequence", "random"] as const;
+export type Cycle = (typeof CYCLES)[number];
+
+/** Moods in a cycle list (blob limit). */
+export const CYCLE_MAX = 12;
+
 export interface FaceDef {
   name: string;
   mood: Mood;
@@ -53,6 +59,13 @@ export interface FaceDef {
   contrast: number;
   overlay: Overlay;
   seed: number;
+  /** Mood cycle: change mood every cycleSeconds, in list order or at random. */
+  cycle: Cycle;
+  cycleSeconds: number;
+  /** Empty = every mood. Order is play order for "sequence". */
+  cycleMoods: Mood[];
+  /** The overlay follows the mood while cycling. */
+  cycleOverlay: boolean;
 }
 
 export interface Board {
@@ -137,6 +150,10 @@ export function defaultFace(): FaceDef {
     contrast: 0xcf,
     overlay: "none",
     seed: 0,
+    cycle: "off",
+    cycleSeconds: 10,
+    cycleMoods: [],
+    cycleOverlay: true,
   };
 }
 
@@ -179,6 +196,12 @@ export function normalizeFace(input: unknown): FaceDef {
     contrast: clampInt(o.contrast, 0, 255, d.contrast),
     overlay: OVERLAYS.includes(o.overlay as Overlay) ? (o.overlay as Overlay) : d.overlay,
     seed: clampInt(o.seed, 0, 255, d.seed),
+    cycle: CYCLES.includes(o.cycle as Cycle) ? (o.cycle as Cycle) : d.cycle,
+    cycleSeconds: clampInt(o.cycleSeconds, 1, 255, d.cycleSeconds),
+    cycleMoods: Array.isArray(o.cycleMoods)
+      ? o.cycleMoods.filter((m): m is Mood => MOODS.includes(m as Mood)).slice(0, CYCLE_MAX)
+      : [],
+    cycleOverlay: bool("cycleOverlay"),
   };
 }
 
@@ -204,4 +227,20 @@ export interface SetupStatus {
   osLabel: string;
   firstRun: boolean;
   checks: SetupCheck[];
+}
+
+// ---------------------------------------------------------------- updates
+
+export interface UpdateInfo {
+  version: string;
+  currentVersion: string;
+  /** YYYY-MM-DD */
+  date: string | null;
+  /** Release notes (markdown), if any. */
+  notes: string | null;
+}
+
+export interface UpdateProgress {
+  downloaded: number;
+  total: number | null;
 }

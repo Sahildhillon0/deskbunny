@@ -7,11 +7,14 @@
   import Editor from "./lib/components/Editor.svelte";
   import FlashBar from "./lib/components/FlashBar.svelte";
   import SetupGuide from "./lib/components/SetupGuide.svelte";
+  import UpdateDialog from "./lib/components/UpdateDialog.svelte";
   import { setup } from "./lib/setup.svelte";
+  import { updater } from "./lib/updater.svelte";
 
   onMount(() => {
     app.load();
     setup.openIfFirstRun();
+    updater.checkOnLaunch();
   });
 </script>
 
@@ -41,6 +44,8 @@
 
 {#if setup.open}
   <SetupGuide />
+{:else if updater.open}
+  <UpdateDialog />
 {/if}
 
 <style>

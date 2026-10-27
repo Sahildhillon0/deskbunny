@@ -1,7 +1,7 @@
 <script lang="ts">
   import * as api from "../api";
   import { app } from "../state.svelte";
-  import { MOODS, NAME_MAX, OVERLAYS, sanitizeName, type Mood, type Overlay } from "../types";
+  import { CYCLES, MOODS, NAME_MAX, OVERLAYS, sanitizeName, type Cycle, type Mood, type Overlay } from "../types";
   import Icon from "./Icon.svelte";
   import Slider from "./Slider.svelte";
   import Switch from "./Switch.svelte";
@@ -32,9 +32,16 @@
     question: "?",
   };
 
+  const CYCLE_LABEL: Record<Cycle, string> = {
+    off: "One mood",
+    sequence: "Loop my list",
+    random: "Random",
+  };
+
   const secs = (v: number) => `${(v / 10).toFixed(1)} s`;
   const px = (v: number) => `${v} px`;
   const signedPx = (v: number) => `${v > 0 ? "+" : ""}${v} px`;
+  const wholeSecs = (v: number) => (v < 60 ? `${v} s` : `${Math.floor(v / 60)} min${v % 60 ? ` ${v % 60} s` : ""}`);
   const hex = (v: number) => `0x${v.toString(16).toUpperCase().padStart(2, "0")}`;
 
   let status = $state<{ kind: "ok" | "error"; text: string } | null>(null);
@@ -57,6 +64,14 @@
     if (f.blinkMax < f.blinkMin) f.blinkMax = f.blinkMin;
     if (f.lookMax < f.lookMin) f.lookMax = f.lookMin;
   });
+
+  /** Adds a mood to the end of the cycle list, or takes it out. List order is play order. */
+  function toggleCycleMood(m: Mood) {
+    const list = app.face.cycleMoods;
+    const i = list.indexOf(m);
+    if (i >= 0) list.splice(i, 1);
+    else list.push(m);
+  }
 
   function onName(e: Event & { currentTarget: HTMLInputElement }) {
     const clean = sanitizeName(e.currentTarget.value);
@@ -148,6 +163,42 @@
         </label>
       {/each}
     </div>
+  </section>
+
+  <section>
+    <h2 class="label" id="cycle-label">Animation</h2>
+    <div class="chips cols-3" role="radiogroup" aria-labelledby="cycle-label">
+      {#each CYCLES as c (c)}
+        <label class="chip" class:on={f.cycle === c}>
+          <input type="radio" name="cycle" value={c} bind:group={app.face.cycle} class="sr-only" />
+          {CYCLE_LABEL[c]}
+        </label>
+      {/each}
+    </div>
+    {#if f.cycle !== "off"}
+      <p class="hint" id="cycle-moods-hint">
+        {#if f.cycleMoods.length === 0}
+          {f.cycle === "sequence" ? "Plays every mood in order." : "Picks from every mood."} Tap moods to choose your own.
+        {:else if f.cycle === "sequence"}
+          Plays in the order you tapped them, then starts over.
+        {:else}
+          Picks one of these at random each time.
+        {/if}
+      </p>
+      <div class="chips cols-3" role="group" aria-label="Moods to cycle through" aria-describedby="cycle-moods-hint">
+        {#each MOODS as m (m)}
+          {@const pos = f.cycleMoods.indexOf(m)}
+          <button type="button" class="chip" class:on={pos >= 0} aria-pressed={pos >= 0} onclick={() => toggleCycleMood(m)}>
+            {#if pos >= 0 && f.cycle === "sequence"}<span class="order">{pos + 1}</span>{/if}
+            {MOOD_LABEL[m]}
+          </button>
+        {/each}
+      </div>
+      <div class="stack cycle-opts">
+        <Slider label="Change every" bind:value={app.face.cycleSeconds} min={1} max={255} format={wholeSecs} />
+        <Switch label="Overlay follows mood" bind:checked={app.face.cycleOverlay} hint="Hearts for love, Zzz for sleepy, and so on" />
+      </div>
+    {/if}
   </section>
 
   <section>
@@ -352,6 +403,23 @@
 
   .chip:has(input:focus-visible) {
     box-shadow: var(--focus);
+  }
+
+  .hint {
+    margin: 12px 0 8px;
+    font-size: 12px;
+    color: var(--text-3);
+  }
+
+  .order {
+    margin-right: 5px;
+    font-family: var(--mono);
+    font-size: 10px;
+    opacity: 0.8;
+  }
+
+  .cycle-opts {
+    margin-top: 16px;
   }
 
   .stack {

@@ -1,6 +1,6 @@
 //! Built-in faces: one per mood plus a couple of extras. "WATCHER" is the default.
 
-use crate::face::{FaceDef, Mood, Overlay};
+use crate::face::{Cycle, FaceDef, Mood, Overlay};
 
 /// Start from the engine default and tweak.
 fn base(name: &str, mood: Mood) -> FaceDef {
@@ -156,6 +156,27 @@ pub fn presets() -> Vec<FaceDef> {
             look_y: 6,
             speed: 4,
             ..base("BUBBLES", Mood::Happy)
+        },
+        FaceDef {
+            // A new mood every 8 s, any of the twelve.
+            mouth: true,
+            cycle: Cycle::Random,
+            cycle_seconds: 8,
+            ..base("MOODY", Mood::Neutral)
+        },
+        FaceDef {
+            // A little day: awake, happy, bored, sleepy, then round again.
+            mouth: true,
+            cycle: Cycle::Sequence,
+            cycle_seconds: 12,
+            cycle_moods: vec![
+                Mood::Neutral,
+                Mood::Happy,
+                Mood::Excited,
+                Mood::Bored,
+                Mood::Sleepy,
+            ],
+            ..base("MY DAY", Mood::Neutral)
         },
     ]
 }

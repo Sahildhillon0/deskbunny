@@ -80,16 +80,32 @@ Cargo.toml                   workspace: crates/*, app/src-tauri
 | 35 | 1 | contrast | SSD1306 0x81 value, default 0xCF |
 | 36 | 1 | overlay | 0 none, 1 hearts, 2 zzz, 3 sweat, 4 anger mark, 5 tears, 6 sparkles, 7 question mark |
 | 37 | 1 | seed | PRNG seed salt, default 0 |
-| 38 | 24 | reserved | must be 0 |
+| 38 | 1 | cycle | mood cycle: 0 off, 1 sequence (loop the list in order), 2 random (from the list) |
+| 39 | 1 | cycle_secs | seconds per mood, 1..255; 0 decodes as the default 10 |
+| 40 | 1 | cycle_count | moods in the list, 0..12; 0 = all 12 moods |
+| 41 | 1 | cycle_flags | bit0 overlay follows the mood (table below); other bits 0 |
+| 42 | 12 | cycle_moods | mood list; entries past `cycle_count` are 0 |
+| 54 | 8 | reserved | must be 0 |
 | 62 | 2 | crc16 | CRC-16/CCITT-FALSE (poly 0x1021, init 0xFFFF) over bytes 0..61 |
 
 Moods: `0 neutral, 1 happy, 2 angry, 3 sad, 4 sleepy, 5 surprised, 6 love,
 7 suspicious, 8 excited, 9 bored, 10 scared, 11 dizzy`.
 
+Mood cycle: with `cycle` != 0 the engine changes `mood` every `cycle_secs`
+seconds. Sequence starts at the first list entry and wraps; random picks from
+the list (never the current mood twice in a row when the list has more than one
+distinct mood) and starts at `mood`. Each change closes the eyes over 150 ms,
+swaps the mood and reopens them over 150 ms, whatever the blink flag says. With
+bit0 of `cycle_flags` set, `overlay` is replaced on each change by the mood's
+overlay: angry anger, sad tears, sleepy zzz, love hearts, suspicious question,
+excited sparkles, scared sweat, every other mood none. Blobs written before the
+cycle fields existed have zeros there, so they decode with the cycle off.
+
 If magic/version/CRC is bad, the firmware falls back to `db_face_default()`
 (neutral, blink + look_around + breathe, name `DESKBUNNY`) and shows it.
 A blob with a valid CRC but out-of-range fields is clamped on decode (unknown
-mood/overlay -> 0, eye_w/eye_h -> 8..56, eye_r -> <= eye_w/2, eye_gap -> <= 40,
+mood/overlay/cycle/list entry -> 0, cycle_count -> <= 12, cycle_secs 0 -> 10,
+list entries past cycle_count -> 0, cycle_flags -> bit0 only, eye_w/eye_h -> 8..56, eye_r -> <= eye_w/2, eye_gap -> <= 40,
 speed -> 1..10, name lowercase -> uppercase, other characters -> space).
 
 ## Engine API
@@ -158,11 +174,15 @@ Later: Nano Every (UPDI), Nano 33 IoT (SAM-BA), ESP32 boards.
 `FaceDef` is the JSON form of the blob, camelCase:
 `{ name, mood, eyeW, eyeH, eyeR, eyeGap, eyeY, blink, lookAround, breathe,
 cyclops, invert, rotate180, mouth, blinkMin, blinkMax, lookMin, lookMax,
-lookX, lookY, speed, contrast, overlay, seed }` (booleans for flag bits,
+lookX, lookY, speed, contrast, overlay, seed, cycle, cycleSeconds,
+cycleMoods, cycleOverlay }` (booleans for flag bits,
 `mood` and `overlay` as string enums, e.g. `"angry"`, `"hearts"`).
 Mood strings are the lowercase enum names above (`"neutral"` .. `"dizzy"`).
 Overlay strings: `"none" | "hearts" | "zzz" | "sweat" | "anger" | "tears" |
-"sparkles" | "question"`. Numbers are the blob's byte types (`eyeY` is -128..127,
+"sparkles" | "question"`. `cycle` is `"off" | "sequence" | "random"`,
+`cycleSeconds` 1..255, `cycleMoods` an array of at most 12 mood strings (empty
+= all moods), `cycleOverlay` the bit0 flag. The four cycle keys are optional on
+input (faces saved before they existed): defaults `"off"`, `10`, `[]`, `true`. Numbers are the blob's byte types (`eyeY` is -128..127,
 everything else 0..255); the backend clamps every field into its documented range
 and normalises `name` (uppercase, unsupported characters -> space, max 12) before
 encoding, simulating or flashing. `save_face` rejects empty or invalid names.
@@ -211,6 +231,23 @@ Setup guide (first run; see docs/SETUP.md):
 - `setup_finish()`: writes the `setup-complete-v1` marker in the app config dir.
 - `setup_open_link(id: string)`: opens an allowlisted URL by id; the webview
   never passes URLs.
+
+Updates (tauri-plugin-updater, driven from Rust; the webview has no updater
+permission). The endpoint is the `latest.json` attached to the latest GitHub
+release; updates are signed with the minisign key whose public half is
+`plugins.updater.pubkey` in tauri.conf.json (private half: the
+`TAURI_SIGNING_PRIVATE_KEY` repo secret).
+- `app_version() -> string`
+- `update_check() -> UpdateInfo | null`, `UpdateInfo = { version, currentVersion,
+  date: string|null, notes: string|null }`; `null` when up to date. Rejects with
+  a readable error when offline or the release has no `latest.json`.
+- `update_install()`: downloads and installs the update found by the last
+  `update_check`, emitting `update-progress` events `{ downloaded, total:
+  number|null }`, then restarts the app (never resolves on success).
+- `update_open_releases()`: opens the GitHub Releases page (fallback when an
+  install is not possible, e.g. a .deb/.rpm install on Linux).
+  The frontend checks once on launch and shows a dialog when `update_check`
+  returns an update; the header also has a "Check for updates" button.
 
 Errors are returned as strings a human can act on ("No response from bootloader
 on /dev/ttyUSB0. Is this an old-bootloader Nano? Try 'Nano (old bootloader)'.").

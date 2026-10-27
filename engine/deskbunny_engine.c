@@ -185,6 +185,10 @@ void db_face_default(db_face_t *out)
   out->contrast = 0xCF;
   out->overlay = DB_OVERLAY_NONE;
   out->seed = 0;
+  out->cycle = DB_CYCLE_OFF;
+  out->cycle_secs = 10;
+  out->cycle_count = 0;
+  out->cycle_flags = DB_CYCLE_FLAG_OVERLAY;
 }
 
 static uint8_t clamp_u8(uint8_t v, uint8_t lo, uint8_t hi)
@@ -203,6 +207,13 @@ static void face_sanitize(db_face_t *f)
   if (f->eye_r > f->eye_w / 2) f->eye_r = (uint8_t)(f->eye_w / 2);
   if (f->eye_gap > 40) f->eye_gap = 40;
   f->speed = clamp_u8(f->speed, 1, 10);
+  if (f->cycle >= DB_CYCLE_COUNT) f->cycle = DB_CYCLE_OFF;
+  if (f->cycle_secs == 0) f->cycle_secs = 10;
+  if (f->cycle_count > DB_CYCLE_MAX) f->cycle_count = DB_CYCLE_MAX;
+  f->cycle_flags &= DB_CYCLE_FLAG_OVERLAY;
+  for (i = 0; i < DB_CYCLE_MAX; i++) {
+    if (i >= f->cycle_count || f->cycle_moods[i] >= DB_MOOD_COUNT) f->cycle_moods[i] = DB_MOOD_NEUTRAL;
+  }
   for (i = 0; i < 12; i++) {
     char c = f->name[i];
     if (end || c == '\0') { end = 1; f->name[i] = '\0'; continue; }
@@ -238,6 +249,11 @@ void db_face_encode(const db_face_t *face, uint8_t blob[DB_BLOB_SIZE])
   blob[35] = face->contrast;
   blob[36] = face->overlay;
   blob[37] = face->seed;
+  blob[38] = face->cycle;
+  blob[39] = face->cycle_secs;
+  blob[40] = face->cycle_count;
+  blob[41] = face->cycle_flags;
+  for (i = 0; i < DB_CYCLE_MAX; i++) blob[42 + i] = face->cycle_moods[i];
   crc = db_crc16(blob, 62);
   blob[62] = (uint8_t)(crc & 0xFFu);
   blob[63] = (uint8_t)(crc >> 8);
@@ -276,6 +292,11 @@ int db_face_decode(const uint8_t blob[DB_BLOB_SIZE], db_face_t *out)
   out->contrast = blob[35];
   out->overlay = blob[36];
   out->seed = blob[37];
+  out->cycle = blob[38];
+  out->cycle_secs = blob[39];
+  out->cycle_count = blob[40];
+  out->cycle_flags = blob[41];
+  for (i = 0; i < DB_CYCLE_MAX; i++) out->cycle_moods[i] = blob[42 + i];
   face_sanitize(out);
   return 0;
 }
@@ -550,6 +571,79 @@ static void pick_target(db_engine_t *e)
   e->look_tgt_y = (int8_t)ty;
 }
 
+/* ------------------------------------------------------------------------ */
+/* Mood cycle                                                                */
+/* ------------------------------------------------------------------------ */
+#define CYCLE_FADE_MS 150u /* eyes close this long before a change, reopen after */
+
+static uint8_t mood_overlay(uint8_t mood)
+{
+  switch (mood) {
+  case DB_MOOD_ANGRY: return DB_OVERLAY_ANGER;
+  case DB_MOOD_SAD: return DB_OVERLAY_TEARS;
+  case DB_MOOD_SLEEPY: return DB_OVERLAY_ZZZ;
+  case DB_MOOD_LOVE: return DB_OVERLAY_HEARTS;
+  case DB_MOOD_SUSPICIOUS: return DB_OVERLAY_QUESTION;
+  case DB_MOOD_EXCITED: return DB_OVERLAY_SPARKLES;
+  case DB_MOOD_SCARED: return DB_OVERLAY_SWEAT;
+  default: return DB_OVERLAY_NONE;
+  }
+}
+
+static uint8_t cycle_len(const db_face_t *f) { return f->cycle_count ? f->cycle_count : (uint8_t)DB_MOOD_COUNT; }
+
+static uint8_t cycle_entry(const db_face_t *f, uint8_t i) { return f->cycle_count ? f->cycle_moods[i] : i; }
+
+static uint32_t cycle_period(const db_face_t *f) { return (uint32_t)f->cycle_secs * 1000u; }
+
+static void set_mood(db_engine_t *e, uint8_t mood)
+{
+  e->face.mood = mood;
+  if (e->face.cycle_flags & DB_CYCLE_FLAG_OVERLAY) e->face.overlay = mood_overlay(mood);
+}
+
+static void cycle_next(db_engine_t *e)
+{
+  const db_face_t *f = &e->face;
+  uint8_t n = cycle_len(f), m;
+  if (f->cycle == DB_CYCLE_SEQUENCE) {
+    e->cycle_idx = (uint8_t)((e->cycle_idx + 1u) % n);
+    m = cycle_entry(f, e->cycle_idx);
+  } else {
+    uint8_t i = (uint8_t)(rng_next(e) % n), k;
+    m = cycle_entry(f, i);
+    /* step past the current mood; gives up when every entry is the same */
+    for (k = 1; m == f->mood && k < n; k++) m = cycle_entry(f, (uint8_t)((i + k) % n));
+  }
+  set_mood(e, m);
+}
+
+static void cycle_update(db_engine_t *e, uint32_t now)
+{
+  uint32_t period = cycle_period(&e->face);
+  int32_t d;
+  if (e->face.cycle == DB_CYCLE_OFF) return;
+  d = (int32_t)(e->cycle_at - now);
+  if (d > (int32_t)period) {
+    e->cycle_at = now + period; /* clock went backwards */
+  } else if (d <= 0) {
+    cycle_next(e);
+    e->cycle_at += period;
+    if ((int32_t)(e->cycle_at - now) <= 0) e->cycle_at = now + period; /* fell far behind */
+  }
+}
+
+/* 0 = open .. 256 = closed: the blink that hides a mood change */
+static int16_t cycle_amount(const db_engine_t *e, uint32_t now)
+{
+  uint32_t period = cycle_period(&e->face), to = e->cycle_at - now, since;
+  if (e->face.cycle == DB_CYCLE_OFF || to > period) return 0;
+  since = period - to;
+  if (to < CYCLE_FADE_MS) return (int16_t)((CYCLE_FADE_MS - to) * 256u / CYCLE_FADE_MS);
+  if (since < CYCLE_FADE_MS) return (int16_t)(256 - ease((int16_t)(since * 256u / CYCLE_FADE_MS)));
+  return 0;
+}
+
 static void update(db_engine_t *e, uint32_t now)
 {
   const db_face_t *f = &e->face;
@@ -561,6 +655,7 @@ static void update(db_engine_t *e, uint32_t now)
     e->next_blink_ms = now + blink_interval(e) / 2u;
     e->next_look_ms = now + look_interval(e) / 2u;
     e->last_ms = now - 100000u;
+    e->cycle_at = now + cycle_period(f);
     e->look_cur_x = e->look_cur_y = 0;
     e->look_tgt_x = e->look_tgt_y = 0;
   }
@@ -1061,6 +1156,8 @@ void db_engine_init(db_engine_t *e, const db_face_t *face, uint32_t seed)
   memset(e, 0, sizeof(*e));
   e->face = *face;
   face_sanitize(&e->face);
+  if (e->face.cycle == DB_CYCLE_SEQUENCE) set_mood(e, cycle_entry(&e->face, 0));
+  else if (e->face.cycle == DB_CYCLE_RANDOM) set_mood(e, e->face.mood);
   e->rng = seed ^ ((uint32_t)e->face.seed * 0x9E3779B1UL) ^ 0xA5F1523DUL;
   if (e->rng == 0) e->rng = 0x6D2B79F5UL;
   for (i = 0; i < 4; i++) (void)rng_next(e);
@@ -1076,6 +1173,7 @@ void db_engine_render(db_engine_t *e, uint32_t now_ms, uint8_t fb[DB_FB_SIZE])
   uint8_t cyclops = (uint8_t)((f->flags & DB_FLAG_CYCLOPS) != 0);
 
   update(e, now_ms);
+  cycle_update(e, now_ms);
   memset(fb, 0, DB_FB_SIZE);
 
   look_pos(e, now_ms, &lx8, &ly8);
@@ -1084,6 +1182,7 @@ void db_engine_render(db_engine_t *e, uint32_t now_ms, uint8_t fb[DB_FB_SIZE])
   if (f->flags & DB_FLAG_BREATHE) by = (int16_t)((int32_t)sin64((uint8_t)(ac >> 8)) * 5 / 254);
   open = (int16_t)(256 - blink_amount(e, now_ms));
   if (f->mood == DB_MOOD_DIZZY) open = 256;
+  open = imin(open, (int16_t)(256 - cycle_amount(e, now_ms)));
 
   cx = (int16_t)(DB_W / 2 + lx);
   cy = (int16_t)(DB_H / 2 + f->eye_y + ly + by);

@@ -56,6 +56,16 @@ enum db_overlay {
 #define DB_FLAG_ROTATE180  0x20
 #define DB_FLAG_MOUTH      0x40
 
+enum db_cycle {
+  DB_CYCLE_OFF = 0,
+  DB_CYCLE_SEQUENCE,
+  DB_CYCLE_RANDOM,
+  DB_CYCLE_COUNT
+};
+
+#define DB_CYCLE_MAX          12   /* moods in the cycle list */
+#define DB_CYCLE_FLAG_OVERLAY 0x01 /* overlay follows the mood */
+
 /* Decoded face (field meanings and ranges: docs/ARCHITECTURE.md). */
 typedef struct db_face {
   uint8_t mood;
@@ -70,6 +80,11 @@ typedef struct db_face {
   uint8_t contrast;
   uint8_t overlay;
   uint8_t seed;
+  uint8_t cycle;       /* enum db_cycle */
+  uint8_t cycle_secs;  /* seconds per mood, 1..255 */
+  uint8_t cycle_count; /* 0 = all moods */
+  uint8_t cycle_flags;
+  uint8_t cycle_moods[DB_CYCLE_MAX];
 } db_face_t;
 
 /* Opaque-ish runtime state. Callers allocate it; only the engine touches fields.
@@ -81,10 +96,12 @@ typedef struct db_engine {
   uint32_t next_blink_ms;
   uint32_t blink_start_ms;
   uint32_t next_look_ms;
+  uint32_t cycle_at; /* time of the next mood change */
   int16_t look_cur_x, look_cur_y; /* fixed point 8.8 */
   int8_t look_tgt_x, look_tgt_y;
   uint8_t blinking;
-  uint8_t pad[3];
+  uint8_t cycle_idx; /* position in the cycle list (sequence mode) */
+  uint8_t pad[2];
 } db_engine_t;
 
 uint16_t db_crc16(const uint8_t *data, size_t len);

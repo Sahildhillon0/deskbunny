@@ -14,6 +14,9 @@ pub const DB_FLAG_INVERT: u8 = 0x10;
 pub const DB_FLAG_ROTATE180: u8 = 0x20;
 pub const DB_FLAG_MOUTH: u8 = 0x40;
 
+pub const DB_CYCLE_MAX: usize = 12;
+pub const DB_CYCLE_FLAG_OVERLAY: u8 = 0x01;
+
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct db_face_t {
@@ -35,6 +38,11 @@ pub struct db_face_t {
     pub contrast: u8,
     pub overlay: u8,
     pub seed: u8,
+    pub cycle: u8,
+    pub cycle_secs: u8,
+    pub cycle_count: u8,
+    pub cycle_flags: u8,
+    pub cycle_moods: [u8; DB_CYCLE_MAX],
 }
 
 #[repr(C)]
@@ -46,12 +54,14 @@ pub struct db_engine_t {
     pub next_blink_ms: u32,
     pub blink_start_ms: u32,
     pub next_look_ms: u32,
+    pub cycle_at: u32,
     pub look_cur_x: i16,
     pub look_cur_y: i16,
     pub look_tgt_x: i8,
     pub look_tgt_y: i8,
     pub blinking: u8,
-    pub pad: [u8; 3],
+    pub cycle_idx: u8,
+    pub pad: [u8; 2],
 }
 
 extern "C" {

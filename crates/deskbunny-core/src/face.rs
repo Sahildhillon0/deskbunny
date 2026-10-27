@@ -84,6 +84,41 @@ impl Overlay {
     }
 }
 
+/// Mood cycle mode (blob byte 38).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Cycle {
+    /// One mood, forever.
+    #[default]
+    Off,
+    /// Loop through `cycle_moods` in order.
+    Sequence,
+    /// Pick from `cycle_moods` at random.
+    Random,
+}
+
+impl Cycle {
+    pub const ALL: [Cycle; 3] = [Cycle::Off, Cycle::Sequence, Cycle::Random];
+
+    pub fn to_u8(self) -> u8 {
+        self as u8
+    }
+
+    pub fn from_u8(v: u8) -> Option<Cycle> {
+        Cycle::ALL.get(v as usize).copied()
+    }
+}
+
+pub const CYCLE_MAX: usize = ffi::DB_CYCLE_MAX;
+
+fn default_cycle_seconds() -> u8 {
+    10
+}
+
+fn default_true() -> bool {
+    true
+}
+
 /// A face, as exchanged with the frontend (camelCase JSON).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -112,6 +147,17 @@ pub struct FaceDef {
     pub contrast: u8,
     pub overlay: Overlay,
     pub seed: u8,
+    /// The cycle fields are optional in JSON: faces saved before they existed load with the cycle off.
+    #[serde(default)]
+    pub cycle: Cycle,
+    #[serde(default = "default_cycle_seconds")]
+    pub cycle_seconds: u8,
+    /// Empty = every mood.
+    #[serde(default)]
+    pub cycle_moods: Vec<Mood>,
+    /// The overlay follows the mood while cycling.
+    #[serde(default = "default_true")]
+    pub cycle_overlay: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -192,6 +238,10 @@ impl FaceDef {
         f.blink_max = f.blink_max.max(f.blink_min);
         f.look_min = f.look_min.max(1);
         f.look_max = f.look_max.max(f.look_min);
+        if f.cycle_seconds == 0 {
+            f.cycle_seconds = default_cycle_seconds();
+        }
+        f.cycle_moods.truncate(CYCLE_MAX);
         f
     }
 
@@ -219,6 +269,10 @@ impl FaceDef {
         for (dst, b) in name.iter_mut().zip(f.name.bytes().take(NAME_MAX)) {
             *dst = b as std::os::raw::c_char;
         }
+        let mut cycle_moods = [0u8; CYCLE_MAX];
+        for (dst, m) in cycle_moods.iter_mut().zip(&f.cycle_moods) {
+            *dst = m.to_u8();
+        }
         db_face_t {
             mood: f.mood.to_u8(),
             name,
@@ -238,6 +292,15 @@ impl FaceDef {
             contrast: f.contrast,
             overlay: f.overlay.to_u8(),
             seed: f.seed,
+            cycle: f.cycle.to_u8(),
+            cycle_secs: f.cycle_seconds,
+            cycle_count: f.cycle_moods.len() as u8,
+            cycle_flags: if f.cycle_overlay {
+                ffi::DB_CYCLE_FLAG_OVERLAY
+            } else {
+                0
+            },
+            cycle_moods,
         }
     }
 
@@ -275,6 +338,13 @@ impl FaceDef {
             contrast: r.contrast,
             overlay: Overlay::from_u8(r.overlay).unwrap_or(Overlay::None),
             seed: r.seed,
+            cycle: Cycle::from_u8(r.cycle).unwrap_or(Cycle::Off),
+            cycle_seconds: r.cycle_secs,
+            cycle_moods: r.cycle_moods[..(r.cycle_count as usize).min(CYCLE_MAX)]
+                .iter()
+                .map(|m| Mood::from_u8(*m).unwrap_or(Mood::Neutral))
+                .collect(),
+            cycle_overlay: r.cycle_flags & ffi::DB_CYCLE_FLAG_OVERLAY != 0,
         }
     }
 
@@ -344,8 +414,9 @@ mod tests {
             assert_eq!(blob[9], face.mood.to_u8());
             assert_eq!(blob[27], face.flags());
             assert_eq!(blob[36], face.overlay.to_u8());
+            assert_eq!(blob[38], face.cycle.to_u8());
             assert!(
-                blob[38..62].iter().all(|b| *b == 0),
+                blob[54..62].iter().all(|b| *b == 0),
                 "reserved must be zero"
             );
             let crc = crc16(&blob[..62]);
@@ -390,6 +461,51 @@ mod tests {
         assert!(f.blink_max >= f.blink_min);
         // The C decoder's sanitiser agrees with ours on a sanitised face.
         assert_eq!(FaceDef::decode(&f.encode()).unwrap(), f);
+    }
+
+    #[test]
+    fn cycle_round_trips_and_defaults_for_old_json() {
+        let f = FaceDef {
+            cycle: Cycle::Random,
+            cycle_seconds: 42,
+            cycle_moods: vec![Mood::Love, Mood::Dizzy, Mood::Love],
+            cycle_overlay: false,
+            ..FaceDef::default()
+        };
+        let blob = f.encode();
+        assert_eq!(
+            &blob[38..45],
+            &[
+                2,
+                42,
+                3,
+                0,
+                Mood::Love as u8,
+                Mood::Dizzy as u8,
+                Mood::Love as u8
+            ]
+        );
+        assert_eq!(FaceDef::decode(&blob).unwrap(), f);
+
+        // Too many moods are cut to 12; zero seconds becomes the default.
+        let long = FaceDef {
+            cycle: Cycle::Sequence,
+            cycle_seconds: 0,
+            cycle_moods: vec![Mood::Sad; 20],
+            ..FaceDef::default()
+        };
+        let back = FaceDef::decode(&long.encode()).unwrap();
+        assert_eq!(back.cycle_moods.len(), CYCLE_MAX);
+        assert_eq!(back.cycle_seconds, 10);
+        assert_eq!(back, long.sanitized());
+
+        // A face saved before the cycle existed.
+        let mut v = serde_json::to_value(FaceDef::default()).unwrap();
+        for k in ["cycle", "cycleSeconds", "cycleMoods", "cycleOverlay"] {
+            v.as_object_mut().unwrap().remove(k);
+        }
+        let old: FaceDef = serde_json::from_value(v).unwrap();
+        assert_eq!(old, FaceDef::default());
     }
 
     #[test]
@@ -440,10 +556,15 @@ mod tests {
             "contrast",
             "overlay",
             "seed",
+            "cycle",
+            "cycleSeconds",
+            "cycleMoods",
+            "cycleOverlay",
         ] {
             assert!(v.get(k).is_some(), "missing {k}");
         }
-        assert_eq!(v.as_object().unwrap().len(), 24);
+        assert_eq!(v.as_object().unwrap().len(), 28);
+        assert_eq!(v["cycle"], "off");
         assert_eq!(v["mood"], "neutral");
         assert_eq!(v["overlay"], "none");
     }

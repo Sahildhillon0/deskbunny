@@ -8,5 +8,7 @@ pub mod ffi;
 pub mod presets;
 
 pub use engine::{Engine, FB_SIZE};
-pub use face::{crc16, normalize_name, FaceDef, FaceError, Mood, Overlay, BLOB_SIZE};
+pub use face::{
+    crc16, normalize_name, Cycle, FaceDef, FaceError, Mood, Overlay, BLOB_SIZE, CYCLE_MAX,
+};
 pub use presets::{default_preset, presets};

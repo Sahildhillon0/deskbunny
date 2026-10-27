@@ -37,7 +37,9 @@ static int face_eq(const db_face_t *a, const db_face_t *b)
          a->blink_max == b->blink_max && a->look_min == b->look_min &&
          a->look_max == b->look_max && a->look_x == b->look_x && a->look_y == b->look_y &&
          a->speed == b->speed && a->contrast == b->contrast && a->overlay == b->overlay &&
-         a->seed == b->seed;
+         a->seed == b->seed && a->cycle == b->cycle && a->cycle_secs == b->cycle_secs &&
+         a->cycle_count == b->cycle_count && a->cycle_flags == b->cycle_flags &&
+         memcmp(a->cycle_moods, b->cycle_moods, DB_CYCLE_MAX) == 0;
 }
 
 /* A random face inside the documented ranges. */
@@ -65,6 +67,11 @@ static void random_valid_face(db_face_t *f)
   f->contrast = (uint8_t)rnd();
   f->overlay = (uint8_t)(rnd() % DB_OVERLAY_COUNT);
   f->seed = (uint8_t)rnd();
+  f->cycle = (uint8_t)(rnd() % DB_CYCLE_COUNT);
+  f->cycle_secs = (uint8_t)(1 + rnd() % 255);
+  f->cycle_count = (uint8_t)(rnd() % (DB_CYCLE_MAX + 1));
+  f->cycle_flags = (uint8_t)(rnd() & DB_CYCLE_FLAG_OVERLAY);
+  for (i = 0; i < f->cycle_count; i++) f->cycle_moods[i] = (uint8_t)(rnd() % DB_MOOD_COUNT);
 }
 
 static void test_crc(void)
@@ -85,9 +92,18 @@ static void test_codec(void)
   CHECK(memcmp(blob, DB_MAGIC, 8) == 0);
   CHECK(blob[8] == DB_BLOB_VERSION);
   CHECK(db_crc16(blob, 62) == (uint16_t)(blob[62] | (blob[63] << 8)));
-  for (i = 38; i < 62; i++) CHECK(blob[i] == 0);
+  CHECK(blob[38] == DB_CYCLE_OFF && blob[39] == 10 && blob[40] == 0 && blob[41] == DB_CYCLE_FLAG_OVERLAY);
+  for (i = 42; i < 62; i++) CHECK(blob[i] == 0);
   CHECK(db_face_decode(blob, &b) == 0);
   CHECK(face_eq(&def, &b));
+
+  /* a blob from before the cycle fields (zeros there) decodes with the cycle off */
+  memcpy(bad, blob, sizeof(bad));
+  memset(bad + 38, 0, 24);
+  bad[62] = (uint8_t)(db_crc16(bad, 62) & 0xFF);
+  bad[63] = (uint8_t)(db_crc16(bad, 62) >> 8);
+  CHECK(db_face_decode(bad, &b) == 0);
+  CHECK(b.cycle == DB_CYCLE_OFF && b.cycle_secs == 10 && b.cycle_count == 0);
 
   for (i = 0; i < 2000; i++) {
     random_valid_face(&a);
@@ -131,6 +147,12 @@ static void test_codec(void)
   bad[25] = 99;  /* gap */
   bad[34] = 0;   /* speed */
   bad[36] = 99;  /* overlay */
+  bad[38] = 9;   /* cycle */
+  bad[40] = 2;   /* cycle_count */
+  bad[41] = 0xFF; /* cycle_flags */
+  bad[42] = 3;
+  bad[43] = 77;  /* unknown mood in the list */
+  bad[44] = 5;   /* past cycle_count */
   bad[10] = 'a';
   bad[11] = '!';
   bad[62] = (uint8_t)(db_crc16(bad, 62) & 0xFF);
@@ -139,6 +161,8 @@ static void test_codec(void)
   CHECK(b.mood == DB_MOOD_NEUTRAL && b.overlay == DB_OVERLAY_NONE);
   CHECK(b.eye_w == 56 && b.eye_h == 8 && b.eye_r == 28 && b.eye_gap == 40 && b.speed == 1);
   CHECK(b.name[0] == 'A' && b.name[1] == ' ');
+  CHECK(b.cycle == DB_CYCLE_OFF && b.cycle_flags == DB_CYCLE_FLAG_OVERLAY);
+  CHECK(b.cycle_moods[0] == 3 && b.cycle_moods[1] == 0 && b.cycle_moods[2] == 0);
 
   /* name: 12 chars max, always NUL-terminated */
   memcpy(bad, blob, sizeof(bad));
@@ -274,6 +298,74 @@ static void test_blink(void)
   CHECK(min_px * 8 < open_px);
 }
 
+/* The mood cycle: moods change on schedule, in order or at random, with a
+ * closed-eye frame at each change and the overlay following the mood. */
+static void test_cycle(void)
+{
+  db_face_t f;
+  db_engine_t e, r;
+  uint8_t fb[DB_FB_SIZE], open_fb[DB_FB_SIZE];
+  uint32_t t;
+  int seen[DB_MOOD_COUNT], k, changes = 0, repeats = 0;
+  uint8_t last;
+  db_face_default(&f);
+  f.flags = 0; /* no blink, no glance: only the cycle closes the eyes */
+  f.cycle = DB_CYCLE_SEQUENCE;
+  f.cycle_secs = 2;
+  f.cycle_count = 3;
+  f.cycle_moods[0] = DB_MOOD_SAD;
+  f.cycle_moods[1] = DB_MOOD_LOVE;
+  f.cycle_moods[2] = DB_MOOD_HAPPY;
+  db_engine_init(&e, &f, 5);
+  CHECK(e.face.mood == DB_MOOD_SAD && e.face.overlay == DB_OVERLAY_TEARS);
+  db_engine_render(&e, 0, fb);
+  db_engine_render(&e, 1000, open_fb);
+  CHECK(e.face.mood == DB_MOOD_SAD);
+  db_engine_render(&e, 1990, fb); /* closing for the change at 2000 */
+  CHECK(popcount_fb(fb) * 4 < popcount_fb(open_fb));
+  db_engine_render(&e, 2000, fb);
+  CHECK(e.face.mood == DB_MOOD_LOVE && e.face.overlay == DB_OVERLAY_HEARTS);
+  db_engine_render(&e, 4000, fb);
+  CHECK(e.face.mood == DB_MOOD_HAPPY && e.face.overlay == DB_OVERLAY_NONE);
+  db_engine_render(&e, 6000, fb);
+  CHECK(e.face.mood == DB_MOOD_SAD); /* wraps */
+  db_engine_render(&e, 13000, fb);  /* far behind: one step, then back on schedule */
+  CHECK(e.face.mood == DB_MOOD_LOVE);
+  CHECK(e.cycle_at == 15000u);
+
+  /* overlay stays put without the flag */
+  f.cycle_flags = 0;
+  f.overlay = DB_OVERLAY_ZZZ;
+  db_engine_init(&e, &f, 5);
+  db_engine_render(&e, 0, fb);
+  db_engine_render(&e, 2000, fb);
+  CHECK(e.face.overlay == DB_OVERLAY_ZZZ);
+
+  /* random over all moods: covers them, never repeats back to back */
+  db_face_default(&f);
+  f.cycle = DB_CYCLE_RANDOM;
+  f.cycle_secs = 1;
+  db_engine_init(&r, &f, 77);
+  memset(seen, 0, sizeof(seen));
+  last = r.face.mood;
+  for (t = 0; t < 400000u; t += 250) {
+    db_engine_render(&r, t, fb);
+    if (r.face.mood != last) changes++;
+    else if (t % 1000u == 0 && t) repeats++;
+    last = r.face.mood;
+    seen[last] = 1;
+  }
+  for (k = 0; k < DB_MOOD_COUNT; k++) CHECK(seen[k]);
+  CHECK(changes > 390 && repeats == 0);
+
+  /* a one-mood list never gets stuck looking for a different mood */
+  f.cycle_count = 1;
+  f.cycle_moods[0] = DB_MOOD_DIZZY;
+  db_engine_init(&r, &f, 1);
+  for (t = 0; t < 5000u; t += 100) db_engine_render(&r, t, fb);
+  CHECK(r.face.mood == DB_MOOD_DIZZY);
+}
+
 /* Render through an exact 1024-byte heap buffer (ASan flags any overrun)
  * plus guard bytes around a stack copy, with hostile faces and clocks. */
 static void test_bounds(void)
@@ -324,6 +416,7 @@ int main(void)
   test_display_flags();
   test_moods_distinct();
   test_blink();
+  test_cycle();
   test_bounds();
   printf("sizeof(db_engine_t) = %u (host), sizeof(db_face_t) = %u\n",
          (unsigned)sizeof(db_engine_t), (unsigned)sizeof(db_face_t));

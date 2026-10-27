@@ -3,41 +3,70 @@
 Releases are published by `.github/workflows/release.yml` straight to the
 repo's **Releases** page, where anyone can download the installers.
 
-It runs on every push to `main`. It publishes a release only when the app
-version has no release yet; otherwise it stops after a few seconds. To ship a
-new version, bump it and push.
+It runs every time the `CI` workflow finishes green on `main`, and **every run
+ships a new version**: the patch number goes up by one (`1.0.0` → `1.0.1`).
+Nothing to bump by hand.
 
 ## Cut a release
 
-1. Make sure `main` is green in CI. The release workflow only builds; it does
-   not re-run the test suites.
-2. Bump the version everywhere at once and push:
+Push to `main`. When CI passes, the `Release` workflow:
 
-   ```sh
-   scripts/bump-version.sh 0.2.0
-   git commit -am "release: v0.2.0" && git push
-   ```
+1. reads the latest published release (say `v1.0.4`) and picks the next
+   version: `1.0.5`;
+2. runs `scripts/bump-version.sh 1.0.5` and pushes the result to `main` as
+   `release: v1.0.5 [skip ci]` (so **pull before your next commit**);
+3. creates a draft release `DeskBunny v1.0.5`, builds the firmware once and
+   installers on Linux, Windows and macOS, and attaches them plus the
+   `.hex`/`.bin` images, `manifest.json` and the updater's `latest.json`;
+4. publishes the release as **Latest**, which creates the `v1.0.5` tag. Apps
+   already installed see it under **Check for updates**.
 
-   The script updates `tauri.conf.json`, `Cargo.toml`/`Cargo.lock`,
-   `app/package.json`/`package-lock.json` and the firmware's `DB_FW_VERSION`.
-   The `preflight` job refuses to release if they disagree.
-3. The `Release` workflow then:
-   1. creates a draft release `DeskBunny v0.2.0`;
-   2. builds the firmware once and installers on Linux, Windows and macOS;
-   3. attaches them plus the `.hex`/`.bin` images and `manifest.json`;
-   4. publishes the release as **Latest**, which creates the `v0.2.0` tag.
+Bigger steps go in the commit message (any commit in the push that CI ran on
+counts only if it is the head commit):
 
-   If any build fails, the draft stays hidden. Fix the problem and push again:
-   the next run reuses the same draft.
+| Commit message contains | 1.0.4 becomes |
+|---|---|
+| nothing | `1.0.5` |
+| `[minor]` | `1.1.0` |
+| `[major]` | `2.0.0` |
+| `[skip release]` | no release for this push |
 
-Other ways to start it:
+You can also run it from the Actions tab (`Release` > `Run workflow`) and pick
+`patch`, `minor` or `major`. A version set higher by hand with
+`scripts/bump-version.sh X.Y.Z` is released as is.
 
-- Push a `vX.Y.Z` tag that matches the app version.
-- Run it from the Actions tab (`Release` > `Run workflow`), optionally with a
-  branch, tag or commit.
+If any build fails, the draft stays hidden and the bump commit stays on
+`main`. Fix the problem and push again: the next run releases that same
+version and reuses the draft.
+
+If two pushes land while CI runs, only the newest commit is released.
 
 To rebuild an already published version (for example after adding a signing
-secret), delete that release and its tag on GitHub, then re-run the workflow.
+secret), delete that release and its tag on GitHub, then run the workflow by
+hand.
+
+## In-app updates
+
+The app checks `releases/latest/download/latest.json` on launch and from the
+download button in the library header. `latest.json` and the `.sig` files are
+made only when `TAURI_SIGNING_PRIVATE_KEY` is set; the matching public key is
+`plugins.updater.pubkey` in `app/src-tauri/tauri.conf.json`. Lose the private
+key and installed apps can no longer update themselves: keep the copy in
+`~/.tauri/deskbunny.key` (and its `.password`) backed up somewhere safe.
+
+The release workflow turns updater bundles on with
+`TAURI_CONFIG={"bundle":{"createUpdaterArtifacts":true}}`, so CI and local
+builds without the key still work. To build signed bundles locally:
+
+```sh
+export TAURI_SIGNING_PRIVATE_KEY="$(cat ~/.tauri/deskbunny.key)"
+export TAURI_SIGNING_PRIVATE_KEY_PASSWORD="$(cat ~/.tauri/deskbunny.key.password)"
+TAURI_CONFIG='{"bundle":{"createUpdaterArtifacts":true}}' npm run tauri build
+```
+
+Self-update works for the Windows installers, the macOS app and the Linux
+AppImage. A `.deb`/`.rpm` install is updated by installing the new package;
+when the in-app install fails the dialog links to the Releases page.
 
 ## Artifacts
 
@@ -73,8 +102,8 @@ requests from forks, so CI builds are always unsigned.
 | `APPLE_TEAM_ID` | 10-character team ID |
 | `WINDOWS_CERTIFICATE` | base64 of an Authenticode `.pfx` |
 | `WINDOWS_CERTIFICATE_PASSWORD` | password of that `.pfx` |
-| `TAURI_SIGNING_PRIVATE_KEY` | updater key from `npx tauri signer generate` |
-| `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | password of the updater key, if any |
+| `TAURI_SIGNING_PRIVATE_KEY` | **required for in-app updates**: contents of `~/.tauri/deskbunny.key` |
+| `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | contents of `~/.tauri/deskbunny.key.password` |
 
 Without signing:
 

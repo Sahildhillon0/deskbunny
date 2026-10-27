@@ -5,6 +5,7 @@
 mod faces;
 mod firmware;
 mod setup;
+mod update;
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -353,12 +354,34 @@ fn setup_open_link(app: AppHandle, id: String) -> CmdResult<()> {
     setup::open_link(&app, &id)
 }
 
+#[tauri::command]
+fn app_version(app: AppHandle) -> String {
+    app.package_info().version.to_string()
+}
+
+#[tauri::command]
+async fn update_check(app: AppHandle) -> CmdResult<Option<update::UpdateInfo>> {
+    update::check(&app).await
+}
+
+#[tauri::command]
+async fn update_install(app: AppHandle) -> CmdResult<()> {
+    update::install(&app).await
+}
+
+#[tauri::command]
+fn update_open_releases(app: AppHandle) -> CmdResult<()> {
+    update::open_releases(&app)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(Sims::default())
+        .manage(update::Pending::default())
         .manage(FlashLock::default())
         .invoke_handler(tauri::generate_handler![
             list_presets,
@@ -380,6 +403,10 @@ pub fn run() {
             setup_run,
             setup_finish,
             setup_open_link,
+            app_version,
+            update_check,
+            update_install,
+            update_open_releases,
         ])
         .run(tauri::generate_context!())
         .expect("error while running DeskBunny");
