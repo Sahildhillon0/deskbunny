@@ -39,9 +39,11 @@ pub async fn check(app: &AppHandle) -> Result<Option<UpdateInfo>, String> {
         // GitHub answered, but the latest release has no latest.json: it predates in-app
         // updates or was built without the signing key. Nothing installable is newer.
         Err(tauri_plugin_updater::Error::ReleaseNotFound) => None,
-        Err(e) => return Err(format!(
+        Err(e) => {
+            return Err(format!(
             "Could not check for updates: {e}. Are you online? You can also look at {RELEASES_URL}"
-        )),
+        ))
+        }
     };
     let info = found.as_ref().map(|u| UpdateInfo {
         version: u.version.clone(),
