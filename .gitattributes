@@ -1,0 +1,3 @@
+# Signed driver package: renesas.cat holds the hash of renesas.inf byte for byte,
+# so git must never convert its line endings (Windows runners default to autocrlf).
+app/src-tauri/drivers/windows/** -text
