@@ -246,7 +246,7 @@ release; updates are signed with the minisign key whose public half is
   `update_check`, emitting `update-progress` events `{ downloaded, total:
   number|null }`, then restarts the app (never resolves on success).
 - `update_open_releases()`: opens the GitHub Releases page (fallback when an
-  install is not possible, e.g. a .deb/.rpm install on Linux).
+  install fails).
   The frontend checks once on launch and shows a dialog when `update_check`
   returns an update; the header also has a "Check for updates" button.
 

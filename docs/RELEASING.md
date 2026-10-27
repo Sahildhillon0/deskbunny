@@ -65,9 +65,9 @@ export TAURI_SIGNING_PRIVATE_KEY_PASSWORD="$(cat ~/.tauri/deskbunny.key.password
 cd app && npm run tauri build -- --config src-tauri/tauri.updater.conf.json
 ```
 
-Self-update works for the Windows installers, the macOS app and the Linux
-AppImage. A `.deb`/`.rpm` install is updated by installing the new package;
-when the in-app install fails the dialog links to the Releases page.
+Every installer type gets a signature and an entry in `latest.json`: Windows
+`.exe`/`.msi`, the macOS app, and Linux AppImage, `.deb` and `.rpm`. If an
+in-app install fails anyway, the dialog links to the Releases page.
 
 ## Artifacts
 
