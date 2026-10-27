@@ -3,7 +3,7 @@
 #
 # Runs every time CI finishes green on main, and every run ships a new version:
 # the patch number goes up by one (0.1.0 -> 0.1.1). Put [minor] or [major] in
-# the commit message (or pick it when running by hand) for 0.2.0 / 1.0.0, and
+# the commit message's first line (or pick it when running by hand) for 0.2.0 / 1.0.0, and
 # [skip release] to not release that push. A version already set higher by
 # scripts/bump-version.sh wins. The bump is committed back to main as
 # "release: vX.Y.Z". See docs/RELEASING.md.
@@ -78,7 +78,9 @@ jobs:
             echo "release=false" >> "$GITHUB_OUTPUT"; exit 0
           fi
           level=${INPUT_BUMP:-patch}
-          case "$MESSAGE" in
+          # Only the subject line counts, so a body that mentions the markers doesn't trigger them.
+          subject=${MESSAGE%%$'\n'*}
+          case "$subject" in
             *"[skip release]"*) echo "::notice::[skip release] in the commit message."
                                 echo "release=false" >> "$GITHUB_OUTPUT"; exit 0 ;;
             *"[major]"*) level=major ;;

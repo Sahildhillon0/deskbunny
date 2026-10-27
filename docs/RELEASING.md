@@ -21,10 +21,10 @@ Push to `main`. When CI passes, the `Release` workflow:
 4. publishes the release as **Latest**, which creates the `v1.0.5` tag. Apps
    already installed see it under **Check for updates**.
 
-Bigger steps go in the commit message (any commit in the push that CI ran on
-counts only if it is the head commit):
+Bigger steps go in the **first line** of the commit message (only the head
+commit of a push counts):
 
-| Commit message contains | 1.0.4 becomes |
+| First line contains | 1.0.4 becomes |
 |---|---|
 | nothing | `1.0.5` |
 | `[minor]` | `1.1.0` |
