@@ -55,13 +55,14 @@ key and installed apps can no longer update themselves: keep the copy in
 `~/.tauri/deskbunny.key` (and its `.password`) backed up somewhere safe.
 
 The release workflow turns updater bundles on with
-`TAURI_CONFIG={"bundle":{"createUpdaterArtifacts":true}}`, so CI and local
-builds without the key still work. To build signed bundles locally:
+`--config src-tauri/tauri.updater.conf.json`, so CI and local builds without
+the key still work (the `TAURI_CONFIG` environment variable does not do it).
+To build signed bundles locally:
 
 ```sh
 export TAURI_SIGNING_PRIVATE_KEY="$(cat ~/.tauri/deskbunny.key)"
 export TAURI_SIGNING_PRIVATE_KEY_PASSWORD="$(cat ~/.tauri/deskbunny.key.password)"
-TAURI_CONFIG='{"bundle":{"createUpdaterArtifacts":true}}' npm run tauri build
+cd app && npm run tauri build -- --config src-tauri/tauri.updater.conf.json
 ```
 
 Self-update works for the Windows installers, the macOS app and the Linux

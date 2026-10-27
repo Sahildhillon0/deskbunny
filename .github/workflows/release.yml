@@ -228,6 +228,7 @@ jobs:
       #  - Updater: no .sig files or latest.json unless TAURI_SIGNING_PRIVATE_KEY is set,
       #    so the in-app update check finds nothing for that release.
       - name: Export signing secrets that are set
+        id: secrets
         shell: bash
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
@@ -253,9 +254,10 @@ jobs:
             fi
           done
           # Updater bundles (.sig, .app.tar.gz, latest.json) need the key; tauri.conf.json
-          # leaves them off so CI and local builds work without it.
+          # leaves them off so CI and local builds work without it. (The TAURI_CONFIG env
+          # var does not turn them on; --config does.)
           if [ -n "$TAURI_SIGNING_PRIVATE_KEY" ]; then
-            echo 'TAURI_CONFIG={"bundle":{"createUpdaterArtifacts":true}}' >> "$GITHUB_ENV"
+            echo "args=--config src-tauri/tauri.updater.conf.json" >> "$GITHUB_OUTPUT"
           else
             echo "::warning::TAURI_SIGNING_PRIVATE_KEY is not set: this release cannot be installed from the app's update button."
           fi
@@ -289,7 +291,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           projectPath: app
-          args: ${{ matrix.args }} ${{ steps.wincert.outputs.args }}
+          args: ${{ matrix.args }} ${{ steps.wincert.outputs.args }} ${{ steps.secrets.outputs.args }}
           releaseId: ${{ needs.preflight.outputs.release_id }}
 
   publish:
