@@ -137,14 +137,23 @@ pub(crate) fn io_err(what: &str, e: io::Error) -> FlashError {
 
 /// Open the port at 1200 baud and drop DTR: the "touch" that makes Caterina,
 /// the R4 bootloaders and the R4 WiFi bridge enter their bootloader.
-pub fn touch_1200(host: &dyn SerialHost, port: &str) -> Result<()> {
-    let mut link = host.open(port, 1200, Duration::from_millis(100))?;
+///
+/// A failed open is returned, not raised: on Windows the R4 resets as soon as
+/// `SetCommState` sends the 1200-baud line coding, so the open itself can fail
+/// ("A device attached to the system is not functioning") although the touch
+/// worked. Callers wait for the bootloader anyway and report this error only if
+/// it never shows up, like arduino-cli's "TOUCH: error during reset".
+pub fn touch_1200(host: &dyn SerialHost, port: &str) -> Option<FlashError> {
+    let mut link = match host.open(port, 1200, Duration::from_millis(100)) {
+        Ok(link) => link,
+        Err(e) => return Some(e),
+    };
     // Some drivers only latch the line coding when DTR toggles.
     let _ = link.set_dtr(true);
     host.sleep(Duration::from_millis(50));
     let _ = link.set_dtr(false);
     drop(link);
-    Ok(())
+    None
 }
 
 /// After a 1200-baud touch, find the port the bootloader shows up on.

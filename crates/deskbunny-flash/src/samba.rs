@@ -196,7 +196,7 @@ impl Samba {
                 0.2,
                 format!("Resetting {port} with a 1200-baud touch"),
             );
-            touch_1200(host, port)?;
+            let touch_err = touch_1200(host, port);
             // The bridge pulses the RA4M1 reset twice (~400 ms) and the bootloader
             // then starts; the USB port itself stays put.
             host.sleep(Duration::from_millis(600));
@@ -208,7 +208,8 @@ impl Samba {
                     port,
                     &boot_ids,
                     Duration::from_secs(8),
-                )?;
+                )
+                .map_err(|e| touch_err.unwrap_or(e))?;
             }
         }
         let baud = self.board.baud.first().copied().unwrap_or(230400);

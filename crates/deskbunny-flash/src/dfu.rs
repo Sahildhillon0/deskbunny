@@ -258,15 +258,15 @@ impl Uploader for Dfu {
                 0.2,
                 format!("Resetting {port} with a 1200-baud touch"),
             );
-            touch_1200(self.host.as_ref(), port)?;
+            let touch_err = touch_1200(self.host.as_ref(), port);
             prog.emit(Stage::Reset, 0.6, "Waiting for the DFU bootloader");
             let start = Instant::now();
             while !self.backend.present(&boot) {
                 if start.elapsed() > ENUM_WAIT {
-                    return Err(FlashError::NoResponse(format!(
+                    return Err(touch_err.unwrap_or_else(|| FlashError::NoResponse(format!(
                         "The {} did not enter its DFU bootloader after resetting {port}. Double-press the reset button (the LED fades in and out), then try again.",
                         self.board.name
-                    )));
+                    ))));
                 }
                 self.host.sleep(Duration::from_millis(200));
             }
@@ -609,6 +609,32 @@ mod tests {
             host.opens.lock().unwrap()[0],
             ("/dev/ttyACM0".to_string(), 1200)
         );
+    }
+
+    /// Windows: the R4 resets during the 1200-baud open, so the open fails with
+    /// ERROR_GEN_FAILURE even though the touch worked.
+    struct ResetsDuringOpen;
+
+    impl crate::mock::Device for ResetsDuringOpen {
+        fn open(&mut self, path: &str, _baud: u32) -> std::result::Result<(), String> {
+            Err(format!(
+                "Could not open {path}: A device attached to the system is not functioning."
+            ))
+        }
+        fn write(&mut self, _data: &[u8]) {}
+        fn read(&mut self, _buf: &mut [u8]) -> usize {
+            0
+        }
+    }
+
+    #[test]
+    fn touch_open_failure_still_waits_for_the_bootloader() {
+        let (state, backend) = sim(None);
+        let host = Arc::new(MockHost::new(Box::new(ResetsDuringOpen)));
+        let up = Dfu::with_backend(minima(), host, backend);
+        let img = crate::mock::test_image(0x4000, 1000);
+        up.upload("COM7", &img, &|_| {}).unwrap();
+        assert!(state.lock().unwrap().manifested);
     }
 
     #[test]

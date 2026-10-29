@@ -69,9 +69,10 @@ impl Avr109 {
             0.2,
             format!("Resetting {port} with a 1200-baud touch"),
         );
-        touch_1200(host, port)?;
+        let touch_err = touch_1200(host, port);
         prog.emit(Stage::Reset, 0.6, "Waiting for the bootloader port");
         wait_for_bootloader_port(host, &before, port, &boot_ids, PORT_WAIT)
+            .map_err(|e| touch_err.unwrap_or(e))
     }
 }
 
