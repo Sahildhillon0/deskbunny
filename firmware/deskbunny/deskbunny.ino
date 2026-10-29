@@ -10,7 +10,7 @@
 #include <Arduino.h>
 #include "deskbunny_engine.h"
 
-#define DB_FW_VERSION "0.1.3"
+#define DB_FW_VERSION "0.1.4"
 
 #if defined(__AVR__)
 #include <avr/pgmspace.h>
