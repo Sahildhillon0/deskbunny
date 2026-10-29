@@ -18,8 +18,8 @@ need the Arduino IDE.
 - **Mood cycle:** loop through moods you pick, in order or at random, with a
   blink at every change.
 - **Draw your own screen:** a pixel editor (pen, shapes, fill, text, image
-  import) for up to four animation frames, shown instead of the face or on top
-  of it. Stored in flash, so it costs the board no RAM.
+  and animated GIF import) for up to four animation frames, shown instead of
+  the face or on top of it. Stored in flash, so it costs the board no RAM.
 - **Windows, macOS and Linux**, with a first-run setup guide and in-app updates.
 
 ## Get started

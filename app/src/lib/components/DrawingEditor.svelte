@@ -28,6 +28,7 @@
     type Frame,
     type Point,
   } from "../drawing";
+  import { decodeGif, isGif, sampleFrames } from "../gif";
   import { OledRenderer } from "../oled";
   import { app } from "../state.svelte";
   import { DRAW_FRAMES, DRAW_MODES, FRAME_MS_MIN, type DrawMode, type Drawing, type FaceDef } from "../types";
@@ -210,7 +211,7 @@
   }
 
   function paintNow() {
-    if (!ctx) return;
+    if (!ctx || !canvas) return; // a repaint queued just before the dialog closed
     const frame = frames[cur];
     const under = mode === "over" && showFace ? faceFrame : null;
     const prev = onion && frames.length > 1 ? frames[(cur + frames.length - 1) % frames.length] : null;
@@ -354,39 +355,80 @@
   // ---------------------------------------------------------------- image import
 
   let fileInput: HTMLInputElement;
-  /** A picture being imported: it is already in frame `frame`; the options re-convert it live. */
-  let importing = $state<{ luma: Float32Array; name: string; frame: number } | null>(null);
+  /**
+   * A picture being imported. It is already in the frames; the options re-convert it live.
+   * One picture goes into frame `frame`; an animated GIF replaces all frames.
+   */
+  let importing = $state<{ lumas: Float32Array[]; name: string; frame: number; note: string } | null>(null);
   let threshold = $state(128);
   let dither = $state(true);
   let invertImg = $state(false);
   let importError = $state("");
+
+  /** Grey levels of an RGBA bitmap, fitted to 128x64 like a picture. */
+  function rgbaLuma(rgba: Uint8ClampedArray<ArrayBuffer>, w: number, h: number): Float32Array {
+    const c = document.createElement("canvas");
+    c.width = w;
+    c.height = h;
+    c.getContext("2d")!.putImageData(new ImageData(rgba, w, h), 0, 0);
+    return imageLuma(c);
+  }
+
+  async function readPicture(file: File): Promise<{ lumas: Float32Array[]; note: string; frameMs?: number }> {
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    if (isGif(bytes)) {
+      const gif = decodeGif(bytes);
+      if (gif.frames.length > 1) {
+        const keep = sampleFrames(gif.frames.length, DRAW_FRAMES);
+        const total = gif.frames.reduce((t, f) => t + f.delayMs, 0);
+        const ms = Math.min(2000, Math.max(FRAME_MS_MIN, Math.round(total / keep.length / 50) * 50));
+        const lumas = keep.map((i) => rgbaLuma(gif.frames[i].rgba, gif.width, gif.height));
+        const note =
+          gif.frames.length > DRAW_FRAMES
+            ? `GIF with ${gif.frames.length} frames: using ${DRAW_FRAMES}, evenly spread (the board holds ${DRAW_FRAMES}).`
+            : `GIF with ${gif.frames.length} frames.`;
+        return { lumas, note, frameMs: ms };
+      }
+      return { lumas: [rgbaLuma(gif.frames[0].rgba, gif.width, gif.height)], note: "" };
+    }
+    const url = URL.createObjectURL(file);
+    try {
+      const im = new Image();
+      im.src = url;
+      await im.decode();
+      return { lumas: [imageLuma(im)], note: "" };
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  }
 
   async function onFile(e: Event & { currentTarget: HTMLInputElement }) {
     const file = e.currentTarget.files?.[0];
     e.currentTarget.value = "";
     if (!file) return;
     importError = "";
-    const url = URL.createObjectURL(file);
     try {
-      const im = new Image();
-      im.src = url;
-      await im.decode();
-      const luma = imageLuma(im);
+      const pic = await readPicture(file);
       remember();
-      importing = { luma, name: file.name, frame: cur };
+      if (pic.frameMs) frameMs = pic.frameMs;
+      importing = { lumas: pic.lumas, name: file.name, frame: cur, note: pic.note };
     } catch {
-      importError = `Could not read ${file.name} as an image. Try a PNG or JPEG.`;
-    } finally {
-      URL.revokeObjectURL(url);
+      importError = `Could not read ${file.name} as an image. Try a PNG, JPEG or GIF.`;
     }
   }
 
   $effect(() => {
     if (!importing) return;
-    const out = lumaToFrame(importing.luma, { threshold, dither, invert: invertImg });
+    const opts = { threshold, dither, invert: invertImg };
+    const out = importing.lumas.map((l) => lumaToFrame(l, opts));
     const at = importing.frame;
     untrack(() => {
-      frames = frames.map((f, i) => (i === at ? out : f));
+      if (out.length > 1) {
+        frames = out;
+        cur = 0;
+      } else {
+        frames = frames.map((f, i) => (i === at ? out[0] : f));
+      }
       changed();
     });
   });
@@ -708,6 +750,7 @@
           <input bind:this={fileInput} type="file" accept="image/*" class="sr-only" tabindex="-1" onchange={onFile} />
           {#if importing}
             <p class="muted file">{importing.name}</p>
+            {#if importing.note}<p class="muted">{importing.note}</p>{/if}
             <div class="opts">
               <Slider label="Brightness cut" bind:value={threshold} min={1} max={254} />
               <Switch label="Dither" bind:checked={dither} hint="Dots for shades of grey" />
@@ -718,7 +761,7 @@
               <button class="btn small ghost" onclick={cancelImport}>Remove picture</button>
             </div>
           {:else}
-            <button class="btn small" onclick={() => fileInput.click()}><Icon name="image" /> Import an image…</button>
+            <button class="btn small" onclick={() => fileInput.click()}><Icon name="image" /> Import an image or GIF…</button>
             {#if importError}<p class="error" role="alert">{importError}</p>{/if}
           {/if}
         </section>
@@ -753,7 +796,8 @@
     display: flex;
     flex-direction: column;
     width: min(1240px, 100%);
-    height: min(820px, 100%);
+    /* vh, not %: a percentage of the auto-sized grid area lets the dialog outgrow the window. */
+    height: min(820px, calc(100vh - 40px));
     border: 1px solid var(--line-2);
     border-radius: var(--r-lg);
     background: var(--surface);
@@ -824,6 +868,7 @@
     min-height: 0;
     display: grid;
     grid-template-columns: 56px minmax(0, 1fr) 292px;
+    grid-template-rows: minmax(0, 1fr);
   }
 
   .tools {
