@@ -3,7 +3,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import type { Board, FaceDef, FlashProgress, FlashReport, Port, SetupStatus, UpdateInfo, UpdateProgress } from "./types";
+import type { Board, FaceDef, FlashProgress, FlashReport, LogEntry, Port, SetupStatus, UpdateInfo, UpdateProgress } from "./types";
 
 // Loaded lazily so the mock never ships in the Tauri code path.
 const mock = () => import("./mock");
@@ -125,3 +125,20 @@ export function onUpdateProgress(cb: (p: UpdateProgress) => void): Promise<() =>
 
 export const updateOpenReleases = (): Promise<void> =>
   isTauri ? invoke<void>("update_open_releases") : mock().then((m) => m.updateOpenReleases());
+
+// ---------------------------------------------------------------- debug log
+
+export const debugLog = (): Promise<LogEntry[]> =>
+  isTauri ? invoke<LogEntry[]>("debug_log") : mock().then((m) => m.debugLog());
+
+export const debugLogClear = (): Promise<void> =>
+  isTauri ? invoke<void>("debug_log_clear") : mock().then((m) => m.debugLogClear());
+
+/** Logs every serial port and USB device the OS reports right now. */
+export const debugUsbScan = (): Promise<void> =>
+  isTauri ? invoke<void>("debug_usb_scan") : mock().then((m) => m.debugUsbScan());
+
+export function onDebugLog(cb: (e: LogEntry) => void): Promise<() => void> {
+  if (!isTauri) return mock().then((m) => m.onDebugLog(cb));
+  return listen<LogEntry>("debug-log", (ev) => cb(ev.payload));
+}

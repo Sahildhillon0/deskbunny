@@ -244,3 +244,15 @@ export interface UpdateProgress {
   downloaded: number;
   total: number | null;
 }
+
+// ---------------------------------------------------------------- debug log
+
+export type LogLevel = "error" | "warn" | "info" | "debug" | "trace";
+
+export interface LogEntry {
+  /** Milliseconds since the app started. */
+  t: number;
+  level: LogLevel;
+  target: string;
+  msg: string;
+}

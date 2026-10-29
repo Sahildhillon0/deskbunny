@@ -68,10 +68,17 @@ impl SerialHost for SystemHost {
     }
 
     fn open(&self, path: &str, baud: u32, timeout: Duration) -> Result<Box<dyn SerialLink>> {
+        log::debug!("open {path} at {baud} baud");
         let port = serialport::new(path, baud)
             .timeout(timeout)
             .open()
-            .map_err(|e| open_error(path, e))?;
+            .map_err(|e| {
+                log::warn!(
+                    "open {path} at {baud} baud failed: {e} (kind {:?})",
+                    e.kind()
+                );
+                open_error(path, e)
+            })?;
         Ok(Box::new(SystemLink(port)))
     }
 
@@ -146,13 +153,21 @@ pub(crate) fn io_err(what: &str, e: io::Error) -> FlashError {
 pub fn touch_1200(host: &dyn SerialHost, port: &str) -> Option<FlashError> {
     let mut link = match host.open(port, 1200, Duration::from_millis(100)) {
         Ok(link) => link,
-        Err(e) => return Some(e),
+        Err(e) => {
+            log::warn!("1200-baud touch on {port}: open failed, waiting for the bootloader anyway");
+            return Some(e);
+        }
     };
     // Some drivers only latch the line coding when DTR toggles.
-    let _ = link.set_dtr(true);
+    if let Err(e) = link.set_dtr(true) {
+        log::debug!("1200-baud touch on {port}: DTR on failed: {e}");
+    }
     host.sleep(Duration::from_millis(50));
-    let _ = link.set_dtr(false);
+    if let Err(e) = link.set_dtr(false) {
+        log::debug!("1200-baud touch on {port}: DTR off failed: {e}");
+    }
     drop(link);
+    log::info!("1200-baud touch on {port} done");
     None
 }
 

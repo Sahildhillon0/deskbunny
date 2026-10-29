@@ -1,5 +1,7 @@
 //! Serial port discovery and board guessing.
 
+use std::sync::Mutex;
+
 use crate::boards::Board;
 use crate::{FlashError, Result};
 
@@ -47,7 +49,89 @@ pub fn list_ports() -> Result<Vec<PortInfo>> {
             .cmp(&a.usb.is_some())
             .then_with(|| a.path.cmp(&b.path))
     });
+    log_if_changed(&LAST_PORTS, || {
+        if out.is_empty() {
+            "serial ports: none".into()
+        } else {
+            format!(
+                "serial ports: {}",
+                out.iter().map(describe_port).collect::<Vec<_>>().join(", ")
+            )
+        }
+    });
     Ok(out)
+}
+
+static LAST_PORTS: Mutex<String> = Mutex::new(String::new());
+static LAST_USB: Mutex<String> = Mutex::new(String::new());
+
+/// Polling loops list ports and USB devices every 100-200 ms: log only changes.
+fn log_if_changed(last: &Mutex<String>, describe: impl FnOnce() -> String) {
+    let now = describe();
+    let mut last = last.lock().unwrap_or_else(|e| e.into_inner());
+    if *last != now {
+        log::info!("{now}");
+        *last = now;
+    }
+}
+
+fn describe_port(p: &PortInfo) -> String {
+    match &p.usb {
+        Some(u) => format!(
+            "{} (USB {:04X}:{:04X}{})",
+            p.path,
+            u.vid,
+            u.pid,
+            u.product
+                .as_deref()
+                .map(|s| format!(" {s}"))
+                .unwrap_or_default()
+        ),
+        None => p.path.clone(),
+    }
+}
+
+const ARDUINO_VID: u16 = 0x2341;
+
+/// Logs the Arduino USB devices (VID 2341) when the set changes. nusb's Debug
+/// output includes the Windows instance id and the driver bound to the device.
+pub fn log_arduino_usb(devices: &[nusb::DeviceInfo]) {
+    log_if_changed(&LAST_USB, || {
+        let ours: Vec<String> = devices
+            .iter()
+            .filter(|d| d.vendor_id() == ARDUINO_VID)
+            .map(|d| format!("{d:?}"))
+            .collect();
+        if ours.is_empty() {
+            "Arduino USB devices: none".into()
+        } else {
+            format!("Arduino USB devices:\n  {}", ours.join("\n  "))
+        }
+    });
+}
+
+/// Logs every serial port and USB device the OS reports right now.
+pub fn log_system_scan() {
+    use nusb::MaybeFuture;
+    match serialport::available_ports() {
+        Ok(ports) if ports.is_empty() => log::info!("scan: no serial ports"),
+        Ok(ports) => {
+            for p in ports {
+                log::info!("scan: serial port {} {:?}", p.port_name, p.port_type);
+            }
+        }
+        Err(e) => log::warn!("scan: could not list serial ports: {e}"),
+    }
+    match nusb::list_devices().wait() {
+        Ok(devices) => {
+            let devices: Vec<_> = devices.collect();
+            log::info!("scan: {} USB devices", devices.len());
+            for d in &devices {
+                log::info!("scan: USB {d:?}");
+            }
+        }
+        Err(e) => log::warn!("scan: could not list USB devices: {e}"),
+    }
 }
 
 /// Drop `/dev/tty.X` when `/dev/cu.X` exists.

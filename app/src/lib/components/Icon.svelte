@@ -19,6 +19,7 @@
     info: "M8 14.5a6.5 6.5 0 1 0 0-13 6.5 6.5 0 0 0 0 13zM8 7.5v4M8 4.8v.2",
     copy: "M5.5 5.5h7v8h-7zM3.5 10.5v-8h7",
     external: "M9.5 2.5h4v4M13.5 2.5 7.5 8.5M11.5 9.5v4h-9v-9h4",
+    terminal: "M2.5 3h11v10h-11zM5 6.5l2 1.5-2 1.5M8.5 10H11",
   } as const;
   export type IconName = keyof typeof PATHS;
 </script>

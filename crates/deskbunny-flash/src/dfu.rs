@@ -121,6 +121,11 @@ pub(crate) fn download(
 ) -> Result<()> {
     // Bring the device to dfuIDLE.
     let st = get_status(t)?;
+    log::debug!(
+        "DFU status before download: state {} status {}",
+        st.state,
+        st.status
+    );
     if st.state == STATE_ERROR {
         t.control_out(DFU_CLRSTATUS, 0, &[])?;
     } else if st.state != STATE_DFU_IDLE {
@@ -136,6 +141,10 @@ pub(crate) fn download(
 
     let size = t.transfer_size().max(64) as usize;
     let blocks = data.chunks(size).count();
+    log::info!(
+        "DFU download: {} bytes in {blocks} blocks of {size}",
+        data.len()
+    );
     prog.emit(
         Stage::Erase,
         1.0,
@@ -145,6 +154,7 @@ pub(crate) fn download(
         t.control_out(DFU_DNLOAD, n as u16, chunk)?;
         let st = wait_idle(t, sleep, "download")?;
         if st.state != STATE_DNLOAD_IDLE {
+            log::warn!("DFU block {n}: state {} status {}", st.state, st.status);
             return Err(FlashError::Protocol(format!(
                 "Unexpected DFU state {} after block {n}.",
                 st.state
@@ -162,6 +172,7 @@ pub(crate) fn download(
     }
 
     // Zero-length DNLOAD ends the transfer and starts manifestation.
+    log::info!("DFU download sent, manifesting");
     prog.emit(Stage::Verify, 0.2, "Finishing (manifestation)");
     t.control_out(DFU_DNLOAD, blocks as u16, &[])?;
     let start = Instant::now();
@@ -190,7 +201,10 @@ pub(crate) fn download(
                 )))
             }
             // Non-manifestation-tolerant devices reset and drop off the bus here.
-            Err(_) if !t.manifestation_tolerant() => return Ok(()),
+            Err(e) if !t.manifestation_tolerant() => {
+                log::debug!("DFU device left during manifestation (expected): {e}");
+                return Ok(());
+            }
             Err(e) => return Err(e),
         }
         if start.elapsed() > Duration::from_secs(10) {
@@ -252,6 +266,12 @@ impl Uploader for Dfu {
         data.resize(data.len().div_ceil(2048) * 2048, 0xFF);
         let boot: Vec<(u16, u16)> = self.board.usb_ids(UsbRole::Bootloader).collect();
 
+        log::info!(
+            "DFU upload on {port}: {} bytes for {}, bootloader {:04X?}",
+            data.len(),
+            self.board.name,
+            boot
+        );
         if !self.backend.present(&boot) {
             prog.emit(
                 Stage::Reset,
@@ -263,6 +283,10 @@ impl Uploader for Dfu {
             let start = Instant::now();
             while !self.backend.present(&boot) {
                 if start.elapsed() > ENUM_WAIT {
+                    log::warn!(
+                        "DFU bootloader did not appear within {} s",
+                        ENUM_WAIT.as_secs()
+                    );
                     return Err(touch_err.unwrap_or_else(|| FlashError::NoResponse(format!(
                         "The {} did not enter its DFU bootloader after resetting {port}. Double-press the reset button (the LED fades in and out), then try again.",
                         self.board.name
@@ -270,6 +294,10 @@ impl Uploader for Dfu {
                 }
                 self.host.sleep(Duration::from_millis(200));
             }
+            log::info!(
+                "DFU bootloader appeared after {} ms",
+                start.elapsed().as_millis()
+            );
             // Let the OS finish enumerating before claiming the interface.
             self.host.sleep(Duration::from_millis(300));
         }
@@ -387,10 +415,19 @@ fn open_hint() -> &'static str {
 impl DfuBackend for NusbBackend {
     fn present(&self, ids: &[(u16, u16)]) -> bool {
         use nusb::MaybeFuture;
-        nusb::list_devices()
-            .wait()
-            .map(|mut it| it.any(|d| ids.contains(&(d.vendor_id(), d.product_id()))))
-            .unwrap_or(false)
+        match nusb::list_devices().wait() {
+            Ok(it) => {
+                let devices: Vec<_> = it.collect();
+                crate::ports::log_arduino_usb(&devices);
+                devices
+                    .iter()
+                    .any(|d| ids.contains(&(d.vendor_id(), d.product_id())))
+            }
+            Err(e) => {
+                log::warn!("Could not list USB devices: {e}");
+                false
+            }
+        }
     }
 
     fn open(&self, ids: &[(u16, u16)], alt: u8) -> Result<Box<dyn DfuTransport>> {
@@ -405,6 +442,7 @@ impl DfuBackend for NusbBackend {
                         .into(),
                 )
             })?;
+        log::info!("opening DFU device {info:?}");
         let dev = info.open().wait().map_err(|e| {
             FlashError::Usb(format!(
                 "Could not open the DFU device: {e}. {}",
@@ -434,6 +472,7 @@ impl DfuBackend for NusbBackend {
             let (attrs, size) = dfu_functional(&extra);
             found = Some((alts[0].interface_number(), size, attrs));
         }
+        log::info!("DFU interface (number, transfer size, attributes): {found:?}");
         let (number, transfer_size, attrs) = found.ok_or_else(|| {
             FlashError::Usb("The device has no DFU interface; is it really an Uno R4 Minima in bootloader mode?".into())
         })?;

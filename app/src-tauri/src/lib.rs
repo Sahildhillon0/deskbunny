@@ -2,6 +2,7 @@
 //! The webview is untrusted: commands take narrow, validated inputs and never
 //! expose generic file or serial access.
 
+mod debuglog;
 mod faces;
 mod firmware;
 mod setup;
@@ -250,9 +251,26 @@ async fn flash(
         let emit = |p: deskbunny_flash::Progress| {
             let _ = app2.emit("flash-progress", p);
         };
-        let mut upload = uploader
-            .upload(&port, &image, &emit)
-            .map_err(|e| e.to_string())?;
+        log::info!(
+            "flash: {} ({}) on {port}, protocol {:?}, face {:?}, DeskBunny {} on {} {}",
+            board.name,
+            board.id,
+            board.protocol,
+            face.name,
+            app2.package_info().version,
+            std::env::consts::OS,
+            std::env::consts::ARCH
+        );
+        let mut upload = uploader.upload(&port, &image, &emit).map_err(|e| {
+            log::error!("flash failed: {e}");
+            e.to_string()
+        })?;
+        log::info!(
+            "upload done: {} bytes in {} ms via {}",
+            upload.bytes_written,
+            upload.duration_ms,
+            upload.port
+        );
         upload.warnings.extend(warnings);
 
         let info_port = app_port_after_upload(host.as_ref(), &board, &port);
@@ -264,6 +282,7 @@ async fn flash(
                 }),
             None => None,
         };
+        log::info!("device banner after flashing: {device_info:?}");
         let device_verified = device_info
             .as_deref()
             .and_then(banner_face_name)
@@ -330,6 +349,21 @@ fn app_port_after_upload(host: &dyn SerialHost, board: &Board, original: &str) -
 }
 
 #[tauri::command]
+fn debug_log() -> Vec<debuglog::LogEntry> {
+    debuglog::lines()
+}
+
+#[tauri::command]
+fn debug_log_clear() {
+    debuglog::clear();
+}
+
+#[tauri::command]
+async fn debug_usb_scan() {
+    let _ = tauri::async_runtime::spawn_blocking(deskbunny_flash::ports::log_system_scan).await;
+}
+
+#[tauri::command]
 async fn setup_status(app: AppHandle) -> setup::SetupStatus {
     // Checks shell out (pnputil, sw_vers) and read rule files: keep them off the UI thread.
     tauri::async_runtime::spawn_blocking(move || setup::status(&app))
@@ -376,6 +410,7 @@ fn update_open_releases(app: AppHandle) -> CmdResult<()> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    debuglog::init();
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
@@ -383,6 +418,16 @@ pub fn run() {
         .manage(Sims::default())
         .manage(update::Pending::default())
         .manage(FlashLock::default())
+        .setup(|app| {
+            debuglog::attach(app.handle());
+            log::info!(
+                "DeskBunny {} started on {} {}",
+                app.package_info().version,
+                std::env::consts::OS,
+                std::env::consts::ARCH
+            );
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             list_presets,
             list_boards,
@@ -407,6 +452,9 @@ pub fn run() {
             update_check,
             update_install,
             update_open_releases,
+            debug_log,
+            debug_log_clear,
+            debug_usb_scan,
         ])
         .run(tauri::generate_context!())
         .expect("error while running DeskBunny");

@@ -10,8 +10,11 @@
   import UpdateDialog from "./lib/components/UpdateDialog.svelte";
   import { setup } from "./lib/setup.svelte";
   import { updater } from "./lib/updater.svelte";
+  import { debugLog } from "./lib/debuglog.svelte";
+  import DebugPanel from "./lib/components/DebugPanel.svelte";
 
   onMount(() => {
+    debugLog.start();
     app.load();
     setup.openIfFirstRun();
     updater.checkOnLaunch();
@@ -42,7 +45,9 @@
   </footer>
 </div>
 
-{#if setup.open}
+{#if debugLog.open}
+  <DebugPanel />
+{:else if setup.open}
   <SetupGuide />
 {:else if updater.open}
   <UpdateDialog />

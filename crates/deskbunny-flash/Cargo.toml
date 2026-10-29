@@ -11,3 +11,4 @@ serde_json.workspace = true
 thiserror.workspace = true
 serialport = "4"
 nusb = "0.2"
+log = "0.4"

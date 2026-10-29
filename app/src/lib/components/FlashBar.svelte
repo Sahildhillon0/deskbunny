@@ -4,6 +4,7 @@
   import { app } from "../state.svelte";
   import type { Board, FlashProgress, FlashReport, FlashStage, Port } from "../types";
   import Icon from "./Icon.svelte";
+  import { debugLog } from "../debuglog.svelte";
 
   const STAGE_LABEL: Record<FlashStage, string> = {
     reset: "Resetting board",
@@ -231,7 +232,10 @@
           <span class="message">{phase.message}</span>
           <span class="detail">{phase.hint}</span>
         </div>
-        <button class="btn ghost small" onclick={() => (phase = { kind: "idle" })}>Dismiss</button>
+        <div class="error-actions">
+          <button class="btn ghost small" onclick={() => debugLog.show()}>Show log</button>
+          <button class="btn ghost small" onclick={() => (phase = { kind: "idle" })}>Dismiss</button>
+        </div>
       </div>
     {:else if port && board}
       <p class="ready">
@@ -461,6 +465,12 @@
   .msg.error {
     border-color: rgba(242, 147, 138, 0.3);
     background: var(--danger-soft);
+  }
+
+  .error-actions {
+    display: flex;
+    gap: 4px;
+    flex: none;
   }
 
   .msg.error > :global(svg),

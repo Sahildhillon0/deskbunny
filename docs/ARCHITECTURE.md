@@ -250,6 +250,19 @@ release; updates are signed with the minisign key whose public half is
   The frontend checks once on launch and shows a dialog when `update_check`
   returns an update; the header also has a "Check for updates" button.
 
+Debug log (for diagnosing flashing problems on a user's machine). The backend
+keeps the last 5000 lines from the `log` crate in memory (DeskBunny and nusb at
+debug level, everything else at warn). The flasher logs every port open and
+its OS error, port-list changes, Arduino USB devices (with the Windows driver
+and instance id) and each DFU step.
+- `debug_log() -> LogEntry[]`, `LogEntry = { t: number (ms since app start),
+  level: "error"|"warn"|"info"|"debug"|"trace", target: string, msg: string }`.
+- Event `debug-log`: one `LogEntry` per new line.
+- `debug_log_clear()`
+- `debug_usb_scan()`: logs every serial port and every USB device the OS
+  reports right now.
+  The library header has a "Debug log" button; a failed flash offers "Show log".
+
 Errors are returned as strings a human can act on ("No response from bootloader
 on /dev/ttyUSB0. Is this an old-bootloader Nano? Try 'Nano (old bootloader)'.").
 

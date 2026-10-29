@@ -3,7 +3,7 @@
 // rough JS approximation for layout work; the real app always renders with the
 // C engine over IPC. Never import this directly: go through ./api.ts.
 
-import { MOODS, defaultFace, normalizeFace, sanitizeName, type Board, type FaceDef, type FlashProgress, type FlashReport, type Mood, type Port, type SetupStatus, type UpdateInfo, type UpdateProgress } from "./types";
+import { MOODS, defaultFace, normalizeFace, sanitizeName, type Board, type FaceDef, type FlashProgress, type FlashReport, type Mood, type Port, type SetupStatus, type UpdateInfo, type UpdateProgress, type LogEntry } from "./types";
 
 const delay = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
@@ -596,4 +596,37 @@ export async function updateInstall(): Promise<void> {
 
 export async function updateOpenReleases(): Promise<void> {
   window.open("https://github.com/Sahildhillon0/deskbunny/releases/latest", "_blank");
+}
+
+// ---------------------------------------------------------------- debug log
+
+const started = Date.now();
+let logLines: LogEntry[] = [
+  { t: 0, level: "info", target: "deskbunny_app_lib", msg: "DeskBunny 0.1.0 started on browser preview" },
+];
+const logListeners = new Set<(e: LogEntry) => void>();
+
+function mockLog(level: LogEntry["level"], msg: string) {
+  const e: LogEntry = { t: Date.now() - started, level, target: "deskbunny_flash::mock", msg };
+  logLines.push(e);
+  logListeners.forEach((cb) => cb(e));
+}
+
+export async function debugLog(): Promise<LogEntry[]> {
+  return [...logLines];
+}
+
+export async function debugLogClear(): Promise<void> {
+  logLines = [];
+}
+
+export async function debugUsbScan(): Promise<void> {
+  mockLog("info", "scan: serial port COM7 UsbPort(UsbPortInfo { vid: 9025, pid: 105 })");
+  mockLog("info", "scan: 1 USB devices");
+  mockLog("warn", "open COM7 at 1200 baud failed: A device attached to the system is not functioning. (kind Unknown)");
+}
+
+export async function onDebugLog(cb: (e: LogEntry) => void): Promise<() => void> {
+  logListeners.add(cb);
+  return () => logListeners.delete(cb);
 }
