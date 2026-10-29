@@ -215,7 +215,7 @@
                   <div class="row">
                     {#if c.action && c.state !== "ok"}
                       <button class="btn primary" disabled={run?.running} onclick={() => runAction(c)}>
-                        {#if run?.running}<span class="spinner" aria-hidden="true"></span>Waiting for permission…{:else}{c.action.label}{/if}
+                        {#if run?.running}<span class="spinner" aria-hidden="true"></span>{c.action.id === "install_ch340_driver" ? "Downloading, then asking permission…" : "Waiting for permission…"}{:else}{c.action.label}{/if}
                       </button>
                     {/if}
                     {#if c.link}

@@ -226,8 +226,11 @@ Setup guide (first run; see docs/SETUP.md):
   state: "ok"|"action"|"warn"|"info", action?: { id, label }, commands?:
   string[], link?: { id, label } }`. `firstRun` is true until `setup_finish`.
 - `setup_run(action: string) -> string`: runs a one-click fix (`install_udev`
-  on Linux via pkexec; `install_r4_driver` on Windows via elevated pnputil)
-  and returns a success message, or rejects with a readable error.
+  on Linux via pkexec; `install_r4_driver` on Windows via elevated pnputil;
+  `install_ch340_driver` on Windows: downloads WCH CH340 driver 3.5.2019.1
+  from the Microsoft Update Catalog, checks its SHA-256, then in one elevated
+  step adds it, deletes every other `ch341ser.inf` package and binds it) and
+  returns a success message, or rejects with a readable error.
 - `setup_finish()`: writes the `setup-complete-v1` marker in the app config dir.
 - `setup_open_link(id: string)`: opens an allowlisted URL by id; the webview
   never passes URLs.
