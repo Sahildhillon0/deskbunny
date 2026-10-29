@@ -2,6 +2,7 @@
 // on screen render, at most THUMB_FPS, and nothing runs while the window is hidden.
 
 import { simFrame } from "./api";
+import { app } from "./state.svelte";
 import type { OledRenderer } from "./oled";
 
 const THUMB_FPS = 12;
@@ -19,7 +20,7 @@ let last = 0;
 
 function tick(now: number) {
   raf = requestAnimationFrame(tick);
-  if (document.hidden || now - last < 1000 / THUMB_FPS - 2) return;
+  if (document.hidden || app.drawOpen || now - last < 1000 / THUMB_FPS - 2) return;
   last = now;
   const t = now - t0;
   for (const th of thumbs) {

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, tick } from "svelte";
+  import { onMount, tick, untrack } from "svelte";
   import * as api from "../api";
   import {
     H,
@@ -97,6 +97,7 @@
 
   /** Call before every change. */
   function remember() {
+    importing = null;
     undoStack = [...undoStack.slice(-(MAX_HISTORY - 1)), snapshot()];
     redoStack = [];
   }
@@ -155,6 +156,7 @@
   }
 
   function selectFrame(i: number) {
+    importing = null;
     cur = i;
     paint();
   }
@@ -175,8 +177,6 @@
   let faceFrame: Uint8Array | null = null;
   /** Pixels a drag (or a click of the text tool) would draw. */
   let preview: { pts: Point[]; on: boolean } | null = null;
-  /** The image being imported, shown instead of the current frame until applied. */
-  let importFrame: Frame | null = null;
   let hover = $state<Point | null>(null);
 
   const LIT = [223, 246, 255];
@@ -198,9 +198,20 @@
     paint();
   }
 
+  // Coalesce repaints to one per display frame (pointer events can outrun it).
+  let paintQueued = false;
   function paint() {
+    if (paintQueued) return;
+    paintQueued = true;
+    requestAnimationFrame(() => {
+      paintQueued = false;
+      paintNow();
+    });
+  }
+
+  function paintNow() {
     if (!ctx) return;
-    const frame = importFrame ?? frames[cur];
+    const frame = frames[cur];
     const under = mode === "over" && showFace ? faceFrame : null;
     const prev = onion && frames.length > 1 ? frames[(cur + frames.length - 1) % frames.length] : null;
     const shape = new Map<number, boolean>();
@@ -343,7 +354,8 @@
   // ---------------------------------------------------------------- image import
 
   let fileInput: HTMLInputElement;
-  let importing = $state<{ luma: Float32Array; name: string } | null>(null);
+  /** A picture being imported: it is already in frame `frame`; the options re-convert it live. */
+  let importing = $state<{ luma: Float32Array; name: string; frame: number } | null>(null);
   let threshold = $state(128);
   let dither = $state(true);
   let invertImg = $state(false);
@@ -359,7 +371,9 @@
       const im = new Image();
       im.src = url;
       await im.decode();
-      importing = { luma: imageLuma(im), name: file.name };
+      const luma = imageLuma(im);
+      remember();
+      importing = { luma, name: file.name, frame: cur };
     } catch {
       importError = `Could not read ${file.name} as an image. Try a PNG or JPEG.`;
     } finally {
@@ -369,21 +383,23 @@
 
   $effect(() => {
     if (!importing) return;
-    importFrame = lumaToFrame(importing.luma, { threshold, dither, invert: invertImg });
-    paint();
+    const out = lumaToFrame(importing.luma, { threshold, dither, invert: invertImg });
+    const at = importing.frame;
+    untrack(() => {
+      frames = frames.map((f, i) => (i === at ? out : f));
+      changed();
+    });
   });
 
-  function applyImport() {
-    const f = importFrame;
+  /** Keep the picture as it is now. */
+  function keepImport() {
     importing = null;
-    importFrame = null;
-    if (f) edit(() => f);
   }
 
+  /** Take the picture out again. */
   function cancelImport() {
     importing = null;
-    importFrame = null;
-    paint();
+    undo();
   }
 
   // ---------------------------------------------------------------- previews (face under, live result)
@@ -611,7 +627,7 @@
         </div>
         <p class="status">
           <span class="coords">{hover ? `x ${hover[0]}  y ${hover[1]}` : "128 × 64"}</span>
-          <span>{importing ? "Adjust the image on the right, then Apply." : TOOL_HINT[tool]}</span>
+          <span>{importing ? "Adjust the picture on the right. Drawing on it keeps it." : TOOL_HINT[tool]}</span>
         </p>
         {#if tool === "text"}
           <div class="text-row">
@@ -640,7 +656,7 @@
           <div class="frames">
             {#each frames as f, i (i)}
               <button class="frame" class:on={i === cur} aria-pressed={i === cur} aria-label={`Frame ${i + 1}`} onclick={() => selectFrame(i)}>
-                <canvas width={W} height={H} use:thumb={{ frame: f, rev }}></canvas>
+                <canvas width={W} height={H} use:thumb={{ frame: f, rev: i === cur ? rev : 0 }}></canvas>
                 <span>{i + 1}</span>
               </button>
             {/each}
@@ -698,8 +714,8 @@
               <Switch label="Invert" bind:checked={invertImg} />
             </div>
             <div class="row">
-              <button class="btn small primary" onclick={applyImport}><Icon name="check" /> Apply to frame {cur + 1}</button>
-              <button class="btn small ghost" onclick={cancelImport}>Cancel</button>
+              <button class="btn small primary" onclick={keepImport}><Icon name="check" /> Keep</button>
+              <button class="btn small ghost" onclick={cancelImport}>Remove picture</button>
             </div>
           {:else}
             <button class="btn small" onclick={() => fileInput.click()}><Icon name="image" /> Import an image…</button>
@@ -729,8 +745,8 @@
     display: grid;
     place-items: center;
     padding: 20px;
-    background: rgba(0, 0, 0, 0.72);
-    backdrop-filter: blur(6px);
+    /* Opaque, no backdrop blur: re-blurring the window on every pointer move is slow in WebKitGTK. */
+    background: rgba(0, 0, 0, 0.9);
   }
 
   .dialog {

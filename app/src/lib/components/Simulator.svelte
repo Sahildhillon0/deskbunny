@@ -75,7 +75,8 @@
       }
 
       // One request in flight at a time; never queue frames behind a slow backend.
-      if (simId === null || inFlight || !(playing || needsFrame)) return;
+      // Paused under the drawing editor: it would compete for the main thread and IPC.
+      if (simId === null || inFlight || app.drawOpen || !(playing || needsFrame)) return;
       if (now - lastReq < 1000 / TARGET_FPS - 2) return;
       inFlight = true;
       lastReq = now;
