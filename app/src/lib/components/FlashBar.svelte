@@ -69,6 +69,8 @@
       return "This build doesn't include the firmware images. Run firmware/build.sh (needs arduino-cli), or use a release build.";
     if (/permission denied|access is denied|EACCES/i.test(msg))
       return "DeskBunny isn't allowed to use this USB device yet. Open the setup guide (the ? button, top left) and follow \"Prepare your computer\".";
+    if (/CH340 driver/i.test(msg))
+      return "Open the setup guide (the ? button, top left): the CH340 entry links the driver version that works.";
     if (/already running/i.test(msg)) return "Wait for the current upload to finish, then try again.";
     if (/busy|in use|already open/i.test(msg))
       return "Another program has the port open. Close any serial monitor or Arduino IDE, then retry.";

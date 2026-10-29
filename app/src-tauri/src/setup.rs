@@ -128,8 +128,9 @@ pub fn run(app: &AppHandle, action: &str) -> Result<String, String> {
 /// Links the guide may open. The webview passes an id, never a URL.
 const LINKS: &[(&str, &str)] = &[
     (
+        // Not WCH's latest download: 3.8 and 3.9 fail every open on clone CH340s.
         "wch_windows",
-        "https://www.wch-ic.com/downloads/CH341SER_EXE.html",
+        "https://www.catalog.update.microsoft.com/Search.aspx?q=wch.cn%203.5.2019.1",
     ),
     (
         "wch_macos",
@@ -150,6 +151,34 @@ pub fn open_link(app: &AppHandle, id: &str) -> Result<(), String> {
     app.opener()
         .open_url(url, None::<&str>)
         .map_err(|e| format!("Could not open the browser: {e}. The address is {url}"))
+}
+
+/// Newest `ch341ser.inf` (WCH CH340) driver version in `pnputil /enum-drivers`
+/// output. Field labels are localised, so look for the inf name and a
+/// four-part version token in the same block.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn newest_ch340_version(enum_drivers: &str) -> Option<String> {
+    let text = enum_drivers.replace("\r\n", "\n");
+    text.split("\n\n")
+        .filter(|block| block.to_ascii_lowercase().contains("ch341ser.inf"))
+        .flat_map(|block| block.split_whitespace())
+        .filter_map(|tok| {
+            let parts: Vec<u32> = tok
+                .split('.')
+                .map(|n| n.parse().ok())
+                .collect::<Option<_>>()?;
+            (parts.len() == 4).then(|| (parts, tok.to_string()))
+        })
+        .max_by(|a, b| a.0.cmp(&b.0))
+        .map(|(_, v)| v)
+}
+
+/// WCH's 3.8 (2023) and later drivers fail to open many clone CH340 chips.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn ch340_driver_broken(version: &str) -> bool {
+    let mut it = version.split('.').map(|n| n.parse::<u32>().unwrap_or(0));
+    let (major, minor) = (it.next().unwrap_or(0), it.next().unwrap_or(0));
+    (major, minor) >= (3, 8)
 }
 
 #[cfg(target_os = "linux")]
@@ -404,18 +433,46 @@ mod platform {
                 out.push(c);
             }
         }
-        let mut ch340 = check(
-            "ch340",
-            "Nano clones (CH340)",
-            "Windows Update usually installs the CH340 driver the first time a clone is plugged in. If no COM port appears for your Nano clone, install the driver from the chip maker.",
-            CheckState::Info,
-        );
+        let mut ch340 = match ch340_driver_version() {
+            Some(v) if ch340_driver_broken(&v) => {
+                let mut c = check(
+                    "ch340",
+                    "Nano clones (CH340)",
+                    format!("CH340 driver {v} is installed. WCH's drivers 3.8 and newer can't open the port on many clone boards (\"A device attached to the system is not functioning\"). If flashing a CH340 board fails, replace it with driver 3.5.2019.1 from the Microsoft Update Catalog (\"wch.cn - Ports - 3.5.2019.1\"). Windows Update may install the newer one again later."),
+                    CheckState::Warn,
+                );
+                c.commands = vec![
+                    "pnputil /enum-drivers   # find the oemNN.inf whose original name is ch341ser.inf".into(),
+                    "pnputil /delete-driver oemNN.inf /uninstall   # in an administrator terminal".into(),
+                    "expand ch341ser.cab -F:* ch341ser".into(),
+                    "pnputil /add-driver ch341ser\\ch341ser.inf /install".into(),
+                ];
+                c
+            }
+            _ => check(
+                "ch340",
+                "Nano clones (CH340)",
+                "Windows Update usually installs the CH340 driver the first time a clone is plugged in. If no COM port appears, or the port won't open, use driver 3.5.2019.1: WCH's newer 3.8 and 3.9 drivers fail on many clone boards.",
+                CheckState::Info,
+            ),
+        };
         ch340.link = Some(SetupLink {
             id: "wch_windows".into(),
-            label: "CH340 driver (WCH)".into(),
+            label: "CH340 driver 3.5.2019.1".into(),
         });
         out.push(ch340);
         out
+    }
+
+    /// Version of the installed WCH CH340 driver (ch341ser.inf), from
+    /// `pnputil /enum-drivers`. Labels are localised; the version format isn't.
+    fn ch340_driver_version() -> Option<String> {
+        let out = Command::new("pnputil")
+            .arg("/enum-drivers")
+            .creation_flags(CREATE_NO_WINDOW)
+            .output()
+            .ok()?;
+        newest_ch340_version(&String::from_utf8_lossy(&out.stdout))
     }
 
     pub fn run(app: &AppHandle, action: &str) -> Result<String, String> {
@@ -512,6 +569,25 @@ mod platform {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn finds_ch340_driver_version() {
+        let out = "Microsoft PnP Utility\r\n\r\nPublished Name:     oem7.inf\r\nOriginal Name:      renesas.inf\r\nDriver Version:     03/03/2020 10.48.0.0\r\n\r\nPublished Name:     oem25.inf\r\nOriginal Name:      ch341ser.inf\r\nProvider Name:      wch.cn\r\nClass GUID:         {4d36e978-e325-11ce-bfc1-08002be10318}\r\nDriver Version:     09/16/2024 3.9.2024.9\r\n\r\nVeröffentlichter Name: oem3.inf\r\nOriginalname:      ch341ser.inf\r\nTreiberversion:    01/30/2019 3.5.2019.1\r\n";
+        assert_eq!(
+            super::newest_ch340_version(out).as_deref(),
+            Some("3.9.2024.9")
+        );
+        assert_eq!(
+            super::newest_ch340_version(
+                "Original Name: renesas.inf\nDriver Version: 1/1/2020 10.48.0.0"
+            ),
+            None
+        );
+        assert!(super::ch340_driver_broken("3.9.2024.9"));
+        assert!(super::ch340_driver_broken("3.8.2023.2"));
+        assert!(!super::ch340_driver_broken("3.5.2019.1"));
+        assert!(!super::ch340_driver_broken("3.7.2022.1"));
+    }
+
     #[cfg(target_os = "linux")]
     #[test]
     fn detects_arduino_rules() {

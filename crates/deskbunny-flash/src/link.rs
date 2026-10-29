@@ -87,9 +87,34 @@ impl SerialHost for SystemHost {
     }
 }
 
+/// WCH's USB vendor id (CH340/CH341 USB-serial chips).
+const WCH_VID: u16 = 0x1A86;
+
+/// True when `path` is a WCH (CH340/CH341) USB-serial adapter.
+fn is_wch_port(path: &str) -> bool {
+    serialport::available_ports()
+        .unwrap_or_default()
+        .iter()
+        .any(|p| {
+            p.port_name.eq_ignore_ascii_case(path)
+                && matches!(&p.port_type, serialport::SerialPortType::UsbPort(u) if u.vid == WCH_VID)
+        })
+}
+
 fn open_error(path: &str, e: serialport::Error) -> FlashError {
     let detail = e.to_string();
+    // WCH's Windows driver 3.8+ fails every open on many clone CH340 chips with
+    // ERROR_GEN_FAILURE (31), which serialport reports as Io(Other); missing and
+    // busy ports are NoDevice. Match the vendor id, not the (localised) text.
+    if cfg!(windows) && matches!(e.kind(), serialport::ErrorKind::Io(_)) && is_wch_port(path) {
+        log::warn!("{path} is a WCH (CH340) port: likely the broken WCH driver 3.8/3.9");
+        return FlashError::Port(format!(
+            "Could not open {path}: {detail}. This board's USB chip is a CH340, and the Windows CH340 driver from WCH (3.8 or newer) doesn't work with it. Install CH340 driver 3.5.2019.1 instead (setup guide, the ? button, top left), then re-plug the board."
+        ));
+    }
     let hint = match e.kind() {
+        // Windows reports a busy port (access denied) as NoDevice too.
+        serialport::ErrorKind::NoDevice if cfg!(windows) => "The board was unplugged, the port name changed, or another program (Arduino IDE, a serial monitor) is using the port. Close other programs, re-plug the board and refresh the port list.".to_string(),
         serialport::ErrorKind::NoDevice => "The board was unplugged or the port name changed. Re-plug it and refresh the port list.".to_string(),
         serialport::ErrorKind::Io(io::ErrorKind::PermissionDenied) => {
             if cfg!(target_os = "linux") {

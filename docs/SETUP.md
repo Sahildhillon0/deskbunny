@@ -82,8 +82,20 @@ sudo apt remove brltty
   If you ever installed "Arduino UNO R4 Boards" in the Arduino IDE, you already
   have this driver.
 - **Nano clones (CH340):** Windows Update usually installs the driver the first
-  time you plug one in. If no COM port appears, install the
-  [WCH CH340 driver](https://www.wch-ic.com/downloads/CH341SER_EXE.html).
+  time you plug one in. Use driver **3.5.2019.1**, not WCH's current 3.8 or 3.9:
+  those fail to open the port on many clone boards ("A device attached to the
+  system is not functioning"). The setup guide warns when 3.8+ is installed.
+  To downgrade:
+  1. Download "wch.cn - Ports - 3.5.2019.1" from the
+     [Microsoft Update Catalog](https://www.catalog.update.microsoft.com/Search.aspx?q=wch.cn%203.5.2019.1).
+  2. `expand ch341ser.cab -F:* ch341ser`
+  3. In an administrator terminal: `pnputil /enum-drivers` to find the
+     `oemNN.inf` whose original name is `ch341ser.inf`, then
+     `pnputil /delete-driver oemNN.inf /uninstall`.
+  4. `pnputil /add-driver ch341ser\ch341ser.inf /install`, re-plug the board and
+     refresh the port list (the COM number may change).
+
+  Windows Update may install the newer driver again later.
 
 ### macOS
 
