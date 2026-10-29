@@ -92,11 +92,12 @@ while IFS=$'\t' read -r image fqbn stem; do
   cp "$src" "$DIST/$image"
 
   offset="$("$PY" "$FWTOOL" locate "$(native_path "$DIST/$image")" | tr -d '\r')"
+  artoffset="$("$PY" "$FWTOOL" locate "$(native_path "$DIST/$image")" art | tr -d '\r')"
   flash="$(sed -n 's/.*Sketch uses \([0-9]*\) bytes.*/\1/p' "$log" | tail -n 1)"
   ram="$(sed -n 's/.*Global variables use \([0-9]*\) bytes.*/\1/p' "$log" | tail -n 1)"
   free="$(sed -n 's/.*leaving \([0-9-]*\) bytes for local.*/\1/p' "$log" | tail -n 1)"
-  line="$(printf '%-20s flash %6s B  globals %5s B  free RAM %5s B  blob @ 0x%x' \
-    "$image" "${flash:-?}" "${ram:-?}" "${free:-?}" "$offset")"
+  line="$(printf '%-20s flash %6s B  globals %5s B  free RAM %5s B  blob @ 0x%x  art @ 0x%x' \
+    "$image" "${flash:-?}" "${ram:-?}" "${free:-?}" "$offset" "$artoffset")"
   SUMMARY="$SUMMARY$line"$'\n'
 
   if [ "$stem" = "atmega328p" ]; then

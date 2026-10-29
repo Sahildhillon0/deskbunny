@@ -17,6 +17,8 @@ class AppState {
   /** Library entry the working copy came from. */
   source = $state<FaceSource | null>(null);
   loadError = $state<string | null>(null);
+  /** The drawing editor dialog is open. */
+  drawOpen = $state(false);
 
   sourceFace = $derived.by(() => {
     const s = this.source;

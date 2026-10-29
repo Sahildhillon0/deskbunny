@@ -20,6 +20,16 @@ extern "C" {
 #define DB_MAGIC "DBFACE01"
 #define DB_BLOB_VERSION 1
 
+/* Drawing blob v1 (docs/ARCHITECTURE.md): composited by the firmware, not the engine. */
+#define DB_ART_MAGIC "DBART001"
+#define DB_ART_VERSION 1
+#define DB_ART_HEADER 16
+#define DB_ART_FRAMES 4
+#define DB_ART_SIZE (DB_ART_HEADER + DB_ART_FRAMES * DB_FB_SIZE)
+#define DB_ART_OFF 0
+#define DB_ART_REPLACE 1
+#define DB_ART_OVER 2
+
 enum db_mood {
   DB_MOOD_NEUTRAL = 0,
   DB_MOOD_HAPPY,

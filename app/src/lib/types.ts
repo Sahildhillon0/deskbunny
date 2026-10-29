@@ -34,6 +34,24 @@ export type Cycle = (typeof CYCLES)[number];
 /** Moods in a cycle list (blob limit). */
 export const CYCLE_MAX = 12;
 
+export const DRAW_MODES = ["replace", "over"] as const;
+/** replace: only the drawing; over: the drawing on top of the animated face. */
+export type DrawMode = (typeof DRAW_MODES)[number];
+
+/** Most frames in a drawing (blob limit). */
+export const DRAW_FRAMES = 4;
+export const FRAME_MS_MIN = 50;
+export const FRAME_MS_MAX = 10000;
+
+/** Up to four 128x64 frames the user drew, flashed with the face. */
+export interface Drawing {
+  mode: DrawMode;
+  /** Milliseconds per frame. */
+  frameMs: number;
+  /** base64 of 1024 bytes each, SSD1306 page layout. */
+  frames: string[];
+}
+
 export interface FaceDef {
   name: string;
   mood: Mood;
@@ -66,6 +84,8 @@ export interface FaceDef {
   cycleMoods: Mood[];
   /** The overlay follows the mood while cycling. */
   cycleOverlay: boolean;
+  /** Absent = no drawing. */
+  drawing?: Drawing;
 }
 
 export interface Board {
@@ -202,6 +222,21 @@ export function normalizeFace(input: unknown): FaceDef {
       ? o.cycleMoods.filter((m): m is Mood => MOODS.includes(m as Mood)).slice(0, CYCLE_MAX)
       : [],
     cycleOverlay: bool("cycleOverlay"),
+    ...normalizeDrawing(o.drawing),
+  };
+}
+
+function normalizeDrawing(input: unknown): { drawing?: Drawing } {
+  if (!input || typeof input !== "object") return {};
+  const o = input as Record<string, unknown>;
+  const frames = Array.isArray(o.frames) ? o.frames.filter((f): f is string => typeof f === "string").slice(0, DRAW_FRAMES) : [];
+  if (!frames.length) return {};
+  return {
+    drawing: {
+      mode: DRAW_MODES.includes(o.mode as DrawMode) ? (o.mode as DrawMode) : "replace",
+      frameMs: clampInt(o.frameMs, FRAME_MS_MIN, FRAME_MS_MAX, 500),
+      frames,
+    },
   };
 }
 
@@ -243,16 +278,4 @@ export interface UpdateInfo {
 export interface UpdateProgress {
   downloaded: number;
   total: number | null;
-}
-
-// ---------------------------------------------------------------- debug log
-
-export type LogLevel = "error" | "warn" | "info" | "debug" | "trace";
-
-export interface LogEntry {
-  /** Milliseconds since the app started. */
-  t: number;
-  level: LogLevel;
-  target: string;
-  msg: string;
 }

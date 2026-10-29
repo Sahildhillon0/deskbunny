@@ -5,7 +5,6 @@
   import Icon from "./Icon.svelte";
   import { setup } from "../setup.svelte";
   import { updater } from "../updater.svelte";
-  import { debugLog } from "../debuglog.svelte";
 
   const MOOD_LABEL: Record<string, string> = {
     neutral: "Watching",
@@ -62,9 +61,6 @@
     onclick={() => (updater.phase === "available" ? (updater.open = true) : updater.check())}
   >
     <Icon name="download" />
-  </button>
-  <button class="btn ghost icon" title="Debug log" aria-label="Open the debug log" onclick={() => debugLog.show()}>
-    <Icon name="terminal" />
   </button>
   <button class="btn ghost icon help" title="Setup guide" aria-label="Open the setup guide" onclick={() => setup.show()}>
     <Icon name="help" />

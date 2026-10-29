@@ -3,6 +3,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::drawing::Drawing;
+
 use crate::ffi::{self, db_face_t};
 
 pub const BLOB_SIZE: usize = ffi::DB_BLOB_SIZE;
@@ -158,6 +160,10 @@ pub struct FaceDef {
     /// The overlay follows the mood while cycling.
     #[serde(default = "default_true")]
     pub cycle_overlay: bool,
+    /// Frames drawn in the app, shown instead of or over the face. Not part of
+    /// the 64-byte face blob: it has its own blob (crate::drawing).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub drawing: Option<Drawing>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -242,6 +248,7 @@ impl FaceDef {
             f.cycle_seconds = default_cycle_seconds();
         }
         f.cycle_moods.truncate(CYCLE_MAX);
+        f.drawing = f.drawing.as_ref().and_then(Drawing::sanitized);
         f
     }
 
@@ -345,6 +352,7 @@ impl FaceDef {
                 .map(|m| Mood::from_u8(*m).unwrap_or(Mood::Neutral))
                 .collect(),
             cycle_overlay: r.cycle_flags & ffi::DB_CYCLE_FLAG_OVERLAY != 0,
+            drawing: None,
         }
     }
 
@@ -563,6 +571,7 @@ mod tests {
         ] {
             assert!(v.get(k).is_some(), "missing {k}");
         }
+        // `drawing` is omitted when there is none.
         assert_eq!(v.as_object().unwrap().len(), 28);
         assert_eq!(v["cycle"], "off");
         assert_eq!(v["mood"], "neutral");

@@ -8,6 +8,9 @@ use crate::{FlashError, Result};
 pub const FACE_MAGIC: &[u8; 8] = b"DBFACE01";
 /// Size of the face blob (docs/ARCHITECTURE.md, "Face blob v1").
 pub const FACE_BLOB_SIZE: usize = 64;
+/// Magic that starts the drawing blob (docs/ARCHITECTURE.md, "Drawing blob v1").
+pub const ART_MAGIC: &[u8; 8] = b"DBART001";
+pub const ART_BLOB_SIZE: usize = 4112;
 
 /// A contiguous run of bytes at an absolute address.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -328,29 +331,41 @@ impl FirmwareImage {
 /// Locate the face blob (exactly one `DBFACE01`) and overwrite its 64 bytes.
 /// Returns the flash address of the blob.
 pub fn patch_face(image: &mut FirmwareImage, blob: &[u8; FACE_BLOB_SIZE]) -> Result<u32> {
-    if &blob[..8] != FACE_MAGIC {
-        return Err(FlashError::Image(
-            "face blob does not start with DBFACE01".into(),
-        ));
+    patch_blob(image, FACE_MAGIC, blob, "face")
+}
+
+/// Locate the drawing blob (exactly one `DBART001`) and overwrite its 4112 bytes.
+/// Returns the flash address of the blob.
+pub fn patch_art(image: &mut FirmwareImage, blob: &[u8; ART_BLOB_SIZE]) -> Result<u32> {
+    patch_blob(image, ART_MAGIC, blob, "drawing")
+}
+
+fn patch_blob(image: &mut FirmwareImage, magic: &[u8; 8], blob: &[u8], what: &str) -> Result<u32> {
+    let m = String::from_utf8_lossy(magic);
+    if &blob[..8] != magic {
+        return Err(FlashError::Image(format!(
+            "{what} blob does not start with {m}"
+        )));
     }
-    let hits = image.find_all(FACE_MAGIC);
+    let hits = image.find_all(magic);
     let addr = match hits.as_slice() {
         [one] => *one,
         [] => {
-            return Err(FlashError::Image(
-                "firmware image has no face slot (DBFACE01 not found); the bundled firmware is damaged or not a DeskBunny build".into(),
-            ))
+            return Err(FlashError::Image(format!(
+                "firmware image has no {what} slot ({m} not found); the bundled firmware is damaged or not a DeskBunny build"
+            )))
         }
         many => {
             return Err(FlashError::Image(format!(
-                "firmware image has {} DBFACE01 markers; expected exactly one",
+                "firmware image has {} {m} markers; expected exactly one",
                 many.len()
             )))
         }
     };
     image.write_at(addr, blob).map_err(|_| {
         FlashError::Image(format!(
-            "face slot at 0x{addr:08X} is truncated: fewer than 64 bytes of image data follow the marker"
+            "{what} slot at 0x{addr:08X} is truncated: fewer than {} bytes of image data follow the marker",
+            blob.len()
         ))
     })?;
     Ok(addr)
@@ -471,6 +486,26 @@ mod tests {
         assert!(flat[0x5A + 8..0x5A + 64].iter().all(|b| *b == 0x42));
         assert_eq!(&flat[..0x5A], &data[..0x5A]);
         assert_eq!(&flat[0x5A + 64..], &data[0x5A + 64..]);
+    }
+
+    #[test]
+    fn patch_art_next_to_face() {
+        let mut data = vec![0xFFu8; 8192];
+        data[100..164].copy_from_slice(&blob(0));
+        data[200..208].copy_from_slice(ART_MAGIC);
+        let mut img = FirmwareImage::from_bin(0x4000, &data);
+        let mut art = [0x5Au8; ART_BLOB_SIZE];
+        art[..8].copy_from_slice(ART_MAGIC);
+        assert_eq!(patch_art(&mut img, &art).unwrap(), 0x4000 + 200);
+        assert_eq!(patch_face(&mut img, &blob(7)).unwrap(), 0x4000 + 100);
+        let flat = img.flatten(0x4000, 0x4000 + 8192, 0);
+        assert_eq!(&flat[200..200 + ART_BLOB_SIZE], &art[..]);
+        assert!(flat[164..200].iter().all(|b| *b == 0xFF));
+
+        // A slot too close to the end of the image is refused.
+        let mut short = FirmwareImage::from_bin(0, &data[..1000]);
+        let e = patch_art(&mut short, &art).unwrap_err().to_string();
+        assert!(e.contains("truncated"), "{e}");
     }
 
     #[test]

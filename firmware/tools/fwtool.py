@@ -3,8 +3,9 @@
 
   fwtool.py images <boards.json>
       one line per distinct image: "<image>\t<fqbn>\t<stem>" (first board wins)
-  fwtool.py locate <image.hex|image.bin>
-      prints the blob offset; exits 1 unless the magic occurs exactly once.
+  fwtool.py locate <image.hex|image.bin> [face|art]
+      prints the face (default) or drawing blob offset; exits 1 unless its
+      magic occurs exactly once.
       .hex: absolute address in the HEX address space (= flash address on AVR)
       .bin: byte offset in the file
   fwtool.py manifest <boards.json> <distdir> <fwVersion>
@@ -15,8 +16,7 @@ import json
 import os
 import sys
 
-MAGIC = b"DBFACE01"
-BLOB_SIZE = 64
+BLOBS = {"face": (b"DBFACE01", 64), "art": (b"DBART001", 4112)}
 
 
 def die(msg):
@@ -71,7 +71,8 @@ def image_bytes(path):
         return 0, fh.read()
 
 
-def locate(path):
+def locate(path, kind="face"):
+    MAGIC, BLOB_SIZE = BLOBS[kind]
     base, data = image_bytes(path)
     hits = []
     start = 0
@@ -124,6 +125,7 @@ def cmd_manifest(boards_path, distdir, version):
             "format": "hex" if image.endswith(".hex") else "bin",
             "sha256": sha,
             "blobOffset": locate(path),
+            "artOffset": locate(path, "art"),
         })
     manifest = {"fwVersion": version, "images": images, "boards": boards}
     with open(os.path.join(distdir, "manifest.json"), "w", newline="\n") as fh:
@@ -134,8 +136,8 @@ def cmd_manifest(boards_path, distdir, version):
 def main(argv):
     if len(argv) == 3 and argv[1] == "images":
         cmd_images(argv[2])
-    elif len(argv) == 3 and argv[1] == "locate":
-        print(locate(argv[2]))
+    elif len(argv) in (3, 4) and argv[1] == "locate" and (len(argv) == 3 or argv[3] in BLOBS):
+        print(locate(argv[2], *argv[3:]))
     elif len(argv) == 5 and argv[1] == "manifest":
         cmd_manifest(argv[2], argv[3], argv[4])
     else:

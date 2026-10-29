@@ -108,6 +108,32 @@ mood/overlay/cycle/list entry -> 0, cycle_count -> <= 12, cycle_secs 0 -> 10,
 list entries past cycle_count -> 0, cycle_flags -> bit0 only, eye_w/eye_h -> 8..56, eye_r -> <= eye_w/2, eye_gap -> <= 40,
 speed -> 1..10, name lowercase -> uppercase, other characters -> space).
 
+## Drawing blob v1 (4112 bytes)
+
+A drawing is up to four 128x64 frames the user drew in the app, shown instead
+of the face or on top of it. Every image carries `DB_ART_BLOB` next to the
+face blob; the flasher finds the magic `DBART001` (exactly one occurrence,
+enforced in CI) and overwrites all 4112 bytes. The image's own copy is "off",
+so a face without a drawing needs no patch.
+
+| Off | Size | Field | Notes |
+|----:|----:|-------|-------|
+| 0 | 8 | magic | ASCII `DBART001` |
+| 8 | 1 | version | `1` |
+| 9 | 1 | mode | 0 off (face only), 1 replace (drawing only), 2 over (drawing OR-ed on top of the face) |
+| 10 | 1 | frames | 1..4 frames in use; 0 = off |
+| 11 | 1 | reserved | 0 |
+| 12 | 2 | frame_ms | u16, ms per frame, 50..10000; 0 decodes as 500 |
+| 14 | 2 | reserved | 0 |
+| 16 | 4096 | frame data | 4 x 1024 bytes, SSD1306 page layout (same as the framebuffer); unused frames 0 |
+
+No CRC: a bad magic, version, mode or frame count just turns the drawing off.
+At time `t` (ms since boot) the shown frame is `(t / frame_ms) % frames`. Mode
+replace: the framebuffer is that frame (the engine is not run). Mode over: the
+engine renders the face as usual, then each byte is OR-ed with the frame.
+Contrast, invert and rotate180 still come from the face blob and apply to the
+drawing too (on the panel in firmware; after compositing in the simulator).
+
 ## Engine API
 
 See `engine/deskbunny_engine.h`. Framebuffer is SSD1306 page layout:
@@ -126,7 +152,9 @@ result is the same pixels.
 
 - Pins (bit-banged SPI, same on every board): CLK 13, MOSI 11, CS 10, DC 9,
   RES 8. Init sequence from the original working sketch.
-- Loop: render at ~30 fps into a 1024-byte framebuffer, push all 8 pages.
+- Loop: render at ~30 fps into a 1024-byte framebuffer, composite the drawing
+  (Drawing blob v1), push all 8 pages. Frames are read straight from flash
+  (PROGMEM on AVR): the drawing costs no RAM.
 - Serial 115200: on boot prints `DESKBUNNY <fw_version> <board_id> <face name>`.
   Replies the same line to `?\n` (`?\r\n` also works). The app uses this to
   verify a flash. Boards sharing an image can't tell themselves apart, so
@@ -158,7 +186,8 @@ result is the same pixels.
 `firmware/build.sh` (needs `arduino-cli` on PATH; installs missing cores
 itself) writes `firmware/dist/`: one image per distinct `image` value plus
 `manifest.json` = `{ "fwVersion": "0.1.0", "images": [{ "file", "format":
-"hex"|"bin", "sha256", "blobOffset" }], "boards": <copy of boards.json> }`.
+"hex"|"bin", "sha256", "blobOffset", "artOffset" }], "boards": <copy of boards.json> }`.
+`artOffset` (same convention) is where `DB_ART_BLOB` starts.
 `blobOffset` is where `DB_FACE_BLOB` starts: for `.hex` the absolute address in
 the HEX address space (= flash address on AVR); for `.bin` the byte offset in
 the file (the R4 bootloader loads the `.bin` at flash 0x4000). The build fails unless the
@@ -175,14 +204,19 @@ Later: Nano Every (UPDI), Nano 33 IoT (SAM-BA), ESP32 boards.
 `{ name, mood, eyeW, eyeH, eyeR, eyeGap, eyeY, blink, lookAround, breathe,
 cyclops, invert, rotate180, mouth, blinkMin, blinkMax, lookMin, lookMax,
 lookX, lookY, speed, contrast, overlay, seed, cycle, cycleSeconds,
-cycleMoods, cycleOverlay }` (booleans for flag bits,
+cycleMoods, cycleOverlay, drawing? }` (booleans for flag bits,
 `mood` and `overlay` as string enums, e.g. `"angry"`, `"hearts"`).
 Mood strings are the lowercase enum names above (`"neutral"` .. `"dizzy"`).
 Overlay strings: `"none" | "hearts" | "zzz" | "sweat" | "anger" | "tears" |
 "sparkles" | "question"`. `cycle` is `"off" | "sequence" | "random"`,
 `cycleSeconds` 1..255, `cycleMoods` an array of at most 12 mood strings (empty
 = all moods), `cycleOverlay` the bit0 flag. The four cycle keys are optional on
-input (faces saved before they existed): defaults `"off"`, `10`, `[]`, `true`. Numbers are the blob's byte types (`eyeY` is -128..127,
+input (faces saved before they existed): defaults `"off"`, `10`, `[]`, `true`. `drawing` is optional (absent or `null` = no drawing) and is the JSON form of
+the drawing blob: `{ mode: "replace" | "over", frameMs, frames: string[] }`,
+`frameMs` 50..10000, `frames` 1..4 base64 strings of 1024 bytes each (page
+layout). The backend clamps `frameMs`, drops frames past 4 and pads or cuts
+each frame to 1024 bytes; an empty `frames` list means no drawing. The
+simulator (`sim_*`) and `flash` both use it. Numbers are the blob's byte types (`eyeY` is -128..127,
 everything else 0..255); the backend clamps every field into its documented range
 and normalises `name` (uppercase, unsupported characters -> space, max 12) before
 encoding, simulating or flashing. `save_face` rejects empty or invalid names.
@@ -252,19 +286,6 @@ release; updates are signed with the minisign key whose public half is
   install fails).
   The frontend checks once on launch and shows a dialog when `update_check`
   returns an update; the header also has a "Check for updates" button.
-
-Debug log (for diagnosing flashing problems on a user's machine). The backend
-keeps the last 5000 lines from the `log` crate in memory (DeskBunny and nusb at
-debug level, everything else at warn). The flasher logs every port open and
-its OS error, port-list changes, Arduino USB devices (with the Windows driver
-and instance id) and each DFU step.
-- `debug_log() -> LogEntry[]`, `LogEntry = { t: number (ms since app start),
-  level: "error"|"warn"|"info"|"debug"|"trace", target: string, msg: string }`.
-- Event `debug-log`: one `LogEntry` per new line.
-- `debug_log_clear()`
-- `debug_usb_scan()`: logs every serial port and every USB device the OS
-  reports right now.
-  The library header has a "Debug log" button; a failed flash offers "Show log".
 
 Errors are returned as strings a human can act on ("No response from bootloader
 on /dev/ttyUSB0. Is this an old-bootloader Nano? Try 'Nano (old bootloader)'.").

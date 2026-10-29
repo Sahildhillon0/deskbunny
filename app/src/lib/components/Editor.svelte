@@ -1,7 +1,7 @@
 <script lang="ts">
   import * as api from "../api";
   import { app } from "../state.svelte";
-  import { CYCLES, MOODS, NAME_MAX, OVERLAYS, sanitizeName, type Cycle, type Mood, type Overlay } from "../types";
+  import { CYCLES, DRAW_MODES, MOODS, NAME_MAX, OVERLAYS, sanitizeName, type Cycle, type DrawMode, type Mood, type Overlay } from "../types";
   import Icon from "./Icon.svelte";
   import Slider from "./Slider.svelte";
   import Switch from "./Switch.svelte";
@@ -37,6 +37,19 @@
     sequence: "Loop my list",
     random: "Random",
   };
+
+  const DRAW_MODE_LABEL: Record<DrawMode, string> = {
+    replace: "Drawing only",
+    over: "Over the face",
+  };
+
+  function setDrawMode(m: DrawMode) {
+    if (app.face.drawing) app.face.drawing.mode = m;
+  }
+
+  function removeDrawing() {
+    delete app.face.drawing;
+  }
 
   const secs = (v: number) => `${(v / 10).toFixed(1)} s`;
   const px = (v: number) => `${v} px`;
@@ -153,6 +166,30 @@
 </header>
 
 <div class="scroll">
+  <section>
+    <h2 class="label" id="drawing-label">Drawing</h2>
+    {#if f.drawing}
+      <div class="chips cols-2" role="radiogroup" aria-labelledby="drawing-label">
+        {#each DRAW_MODES as m (m)}
+          <button type="button" role="radio" class="chip" class:on={f.drawing.mode === m} aria-checked={f.drawing.mode === m} onclick={() => setDrawMode(m)}>
+            {DRAW_MODE_LABEL[m]}
+          </button>
+        {/each}
+      </div>
+      <p class="hint">
+        {f.drawing.frames.length === 1 ? "1 frame" : `${f.drawing.frames.length} frames`}.
+        {f.drawing.mode === "replace" ? "The face settings below are hidden while the drawing replaces the face; contrast, invert and rotate still apply." : "Drawn on top of the animated face."}
+      </p>
+      <div class="row">
+        <button class="btn" onclick={() => (app.drawOpen = true)}><Icon name="pencil" /> Edit drawing</button>
+        <button class="btn ghost" onclick={removeDrawing}><Icon name="trash" /> Remove</button>
+      </div>
+    {:else}
+      <p class="hint first">Draw your own picture, text or a short animation. It is shown instead of the face, or on top of it.</p>
+      <button class="btn" onclick={() => (app.drawOpen = true)}><Icon name="pencil" /> Draw on the screen</button>
+    {/if}
+  </section>
+
   <section>
     <h2 class="label" id="mood-label">Mood</h2>
     <div class="chips cols-3" role="radiogroup" aria-labelledby="mood-label">
@@ -370,6 +407,10 @@
     grid-template-columns: repeat(3, 1fr);
   }
 
+  .cols-2 {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
   .cols-4 {
     grid-template-columns: repeat(4, 1fr);
   }
@@ -409,6 +450,10 @@
     margin: 12px 0 8px;
     font-size: 12px;
     color: var(--text-3);
+  }
+
+  .hint.first {
+    margin-top: 0;
   }
 
   .order {

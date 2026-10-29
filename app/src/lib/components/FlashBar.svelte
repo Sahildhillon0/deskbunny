@@ -4,7 +4,6 @@
   import { app } from "../state.svelte";
   import type { Board, FlashProgress, FlashReport, FlashStage, Port } from "../types";
   import Icon from "./Icon.svelte";
-  import { debugLog } from "../debuglog.svelte";
 
   const STAGE_LABEL: Record<FlashStage, string> = {
     reset: "Resetting board",
@@ -70,7 +69,7 @@
     if (/permission denied|access is denied|EACCES/i.test(msg))
       return "DeskBunny isn't allowed to use this USB device yet. Open the setup guide (the ? button, top left) and follow \"Prepare your computer\".";
     if (/CH340 driver/i.test(msg))
-      return "Open the setup guide (the ? button, top left): the CH340 entry links the driver version that works.";
+      return "Open the setup guide (the ? button, top left): the CH340 entry installs the driver version that works.";
     if (/already running/i.test(msg)) return "Wait for the current upload to finish, then try again.";
     if (/busy|in use|already open/i.test(msg))
       return "Another program has the port open. Close any serial monitor or Arduino IDE, then retry.";
@@ -235,7 +234,6 @@
           <span class="detail">{phase.hint}</span>
         </div>
         <div class="error-actions">
-          <button class="btn ghost small" onclick={() => debugLog.show()}>Show log</button>
           <button class="btn ghost small" onclick={() => (phase = { kind: "idle" })}>Dismiss</button>
         </div>
       </div>

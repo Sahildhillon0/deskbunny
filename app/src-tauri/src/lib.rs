@@ -2,7 +2,6 @@
 //! The webview is untrusted: commands take narrow, validated inputs and never
 //! expose generic file or serial access.
 
-mod debuglog;
 mod faces;
 mod firmware;
 mod setup;
@@ -17,7 +16,7 @@ use deskbunny_core::{presets, Engine, FaceDef};
 use deskbunny_flash::boards::{Board, UsbRole};
 use deskbunny_flash::link::query_device_info;
 use deskbunny_flash::ports::guess_board;
-use deskbunny_flash::{patch_face, uploader_for, Report, SerialHost, SystemHost};
+use deskbunny_flash::{patch_art, patch_face, uploader_for, Report, SerialHost, SystemHost};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 
@@ -226,6 +225,12 @@ async fn flash(
     let (mut image, entry) = fw.image(&board)?;
     let face = face.sanitized();
     let blob_address = patch_face(&mut image, &face.encode()).map_err(|e| e.to_string())?;
+    // The image ships with the drawing off; only a face with a drawing needs the slot.
+    if let Some(drawing) = &face.drawing {
+        patch_art(&mut image, &drawing.encode()).map_err(|e| {
+            format!("{e}. This firmware predates drawings; update DeskBunny to flash one.")
+        })?;
+    }
     let mut warnings = Vec::new();
     // manifest blobOffset: HEX address for .hex, file offset for .bin.
     let expected = match entry.format.as_str() {
@@ -349,21 +354,6 @@ fn app_port_after_upload(host: &dyn SerialHost, board: &Board, original: &str) -
 }
 
 #[tauri::command]
-fn debug_log() -> Vec<debuglog::LogEntry> {
-    debuglog::lines()
-}
-
-#[tauri::command]
-fn debug_log_clear() {
-    debuglog::clear();
-}
-
-#[tauri::command]
-async fn debug_usb_scan() {
-    let _ = tauri::async_runtime::spawn_blocking(deskbunny_flash::ports::log_system_scan).await;
-}
-
-#[tauri::command]
 async fn setup_status(app: AppHandle) -> setup::SetupStatus {
     // Checks shell out (pnputil, sw_vers) and read rule files: keep them off the UI thread.
     tauri::async_runtime::spawn_blocking(move || setup::status(&app))
@@ -410,7 +400,6 @@ fn update_open_releases(app: AppHandle) -> CmdResult<()> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    debuglog::init();
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
@@ -418,16 +407,6 @@ pub fn run() {
         .manage(Sims::default())
         .manage(update::Pending::default())
         .manage(FlashLock::default())
-        .setup(|app| {
-            debuglog::attach(app.handle());
-            log::info!(
-                "DeskBunny {} started on {} {}",
-                app.package_info().version,
-                std::env::consts::OS,
-                std::env::consts::ARCH
-            );
-            Ok(())
-        })
         .invoke_handler(tauri::generate_handler![
             list_presets,
             list_boards,
@@ -452,9 +431,6 @@ pub fn run() {
             update_check,
             update_install,
             update_open_releases,
-            debug_log,
-            debug_log_clear,
-            debug_usb_scan,
         ])
         .run(tauri::generate_context!())
         .expect("error while running DeskBunny");

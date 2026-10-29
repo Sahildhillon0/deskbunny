@@ -65,6 +65,17 @@ extern volatile const uint8_t DB_FACE_BLOB[DB_BLOB_SIZE];
 __attribute__((used)) volatile const uint8_t DB_FACE_BLOB[DB_BLOB_SIZE] = DB_DEFAULT_BLOB_INIT;
 #endif
 
+// The drawing blob (Drawing blob v1): up to 4 frames shown instead of or over
+// the face. Same rules as the face blob; it ships "off" and the app patches it.
+#define DB_ART_INIT { 'D', 'B', 'A', 'R', 'T', '0', '0', '1', DB_ART_VERSION }
+#if defined(__AVR__)
+extern const uint8_t DB_ART_BLOB[DB_ART_SIZE] PROGMEM;
+__attribute__((used)) const uint8_t DB_ART_BLOB[DB_ART_SIZE] PROGMEM = DB_ART_INIT;
+#else
+extern volatile const uint8_t DB_ART_BLOB[DB_ART_SIZE];
+__attribute__((used)) volatile const uint8_t DB_ART_BLOB[DB_ART_SIZE] = DB_ART_INIT;
+#endif
+
 static const uint8_t PIN_OLED_CLK = 13;
 static const uint8_t PIN_OLED_MOSI = 11;
 static const uint8_t PIN_OLED_CS = 10;
@@ -77,6 +88,9 @@ static uint8_t fb[DB_FB_SIZE];
 static db_engine_t engine;
 static db_face_t face; // as decoded, including the invert/rotate180 flags
 static uint32_t lastFrame;
+static uint8_t artMode;   // DB_ART_OFF / REPLACE / OVER
+static uint8_t artFrames; // 1..DB_ART_FRAMES when artMode != DB_ART_OFF
+static uint16_t artMs;
 
 // ---------------------------------------------------------------------------
 // Bit-banged SPI. On AVR the pins are driven through their PORT registers
@@ -225,6 +239,40 @@ static void oledPush(const uint8_t *buf)
 }
 
 // ---------------------------------------------------------------------------
+// Drawing
+// ---------------------------------------------------------------------------
+static void artLoad()
+{
+  // XOR-ed so "DBART001" occurs in the image only once, in DB_ART_BLOB.
+  static const uint8_t magicX[8] = { 'D' ^ 0x5A, 'B' ^ 0x5A, 'A' ^ 0x5A, 'R' ^ 0x5A,
+                                     'T' ^ 0x5A, '0' ^ 0x5A, '0' ^ 0x5A, '1' ^ 0x5A };
+  artMode = DB_ART_OFF;
+  for (uint8_t i = 0; i < 8; i++)
+    if ((uint8_t)(DB_ROM_BYTE(&DB_ART_BLOB[i]) ^ 0x5A) != magicX[i]) return;
+  if (DB_ROM_BYTE(&DB_ART_BLOB[8]) != DB_ART_VERSION) return;
+  uint8_t mode = DB_ROM_BYTE(&DB_ART_BLOB[9]);
+  uint8_t frames = DB_ROM_BYTE(&DB_ART_BLOB[10]);
+  if ((mode != DB_ART_REPLACE && mode != DB_ART_OVER) || frames < 1 || frames > DB_ART_FRAMES) return;
+  uint16_t ms = (uint16_t)(DB_ROM_BYTE(&DB_ART_BLOB[12]) | (DB_ROM_BYTE(&DB_ART_BLOB[13]) << 8));
+  if (ms == 0) ms = 500;
+  artMs = ms < 50 ? 50 : (ms > 10000 ? 10000 : ms);
+  artFrames = frames;
+  artMode = mode;
+}
+
+// Replace or OR the current drawing frame into fb, reading it straight from flash.
+static void artCompose(uint32_t now)
+{
+  uint8_t frame = (uint8_t)((now / artMs) % artFrames);
+  uint16_t base = (uint16_t)(DB_ART_HEADER + (uint16_t)frame * DB_FB_SIZE);
+  if (artMode == DB_ART_REPLACE) {
+    for (uint16_t i = 0; i < DB_FB_SIZE; i++) fb[i] = DB_ROM_BYTE(&DB_ART_BLOB[base + i]);
+  } else {
+    for (uint16_t i = 0; i < DB_FB_SIZE; i++) fb[i] |= DB_ROM_BYTE(&DB_ART_BLOB[base + i]);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Boot splash
 // ---------------------------------------------------------------------------
 static void fbSet(int16_t x, int16_t y)
@@ -315,6 +363,7 @@ void setup()
   uint8_t blob[DB_BLOB_SIZE];
   for (uint8_t i = 0; i < DB_BLOB_SIZE; i++) blob[i] = DB_ROM_BYTE(&DB_FACE_BLOB[i]);
   db_face_decode(blob, &face); // falls back to the default face on a bad blob
+  artLoad();
 
   Serial.begin(115200);
   printBanner();
@@ -341,7 +390,8 @@ void loop()
   if ((uint32_t)(now - lastFrame) >= FRAME_MS) {
     lastFrame += FRAME_MS;
     if ((uint32_t)(now - lastFrame) >= FRAME_MS) lastFrame = now; // fell behind: resync
-    db_engine_render(&engine, now, fb);
+    if (artMode != DB_ART_REPLACE) db_engine_render(&engine, now, fb);
+    if (artMode != DB_ART_OFF) artCompose(now);
     oledPush(fb);
   }
 }

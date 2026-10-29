@@ -1,5 +1,6 @@
 //! Safe wrapper over the C engine, used by the simulator.
 
+use crate::drawing::{invert_rotate, Drawing};
 use crate::face::FaceDef;
 use crate::ffi::{self, db_engine_t, DB_FB_SIZE};
 
@@ -12,6 +13,11 @@ pub const HEIGHT: usize = 64;
 pub struct Engine {
     state: Box<db_engine_t>,
     seed: u32,
+    /// With a drawing the engine draws upright and invert/rotate180 are applied
+    /// after compositing, as the panel does on the board.
+    drawing: Option<Drawing>,
+    invert: bool,
+    rotate180: bool,
 }
 
 impl Engine {
@@ -19,6 +25,9 @@ impl Engine {
         let mut e = Engine {
             state: Box::default(),
             seed,
+            drawing: None,
+            invert: false,
+            rotate180: false,
         };
         e.set_face(face);
         e
@@ -26,7 +35,13 @@ impl Engine {
 
     /// Switch to another face (restarts the animation timers with the same seed).
     pub fn set_face(&mut self, face: &FaceDef) {
-        let raw = face.to_raw();
+        let mut raw = face.to_raw();
+        self.drawing = face.drawing.as_ref().and_then(Drawing::sanitized);
+        self.invert = face.invert;
+        self.rotate180 = face.rotate180;
+        if self.drawing.is_some() {
+            raw.flags &= !(ffi::DB_FLAG_INVERT | ffi::DB_FLAG_ROTATE180);
+        }
         // SAFETY: state is a valid, exclusively owned db_engine_t.
         unsafe { ffi::db_engine_init(&mut *self.state, &raw, self.seed) };
     }
@@ -37,6 +52,10 @@ impl Engine {
         let mut fb = [0u8; FB_SIZE];
         // SAFETY: fb is DB_FB_SIZE bytes; state is valid.
         unsafe { ffi::db_engine_render(&mut *self.state, t_ms, fb.as_mut_ptr()) };
+        if let Some(d) = &self.drawing {
+            d.compose(&mut fb, t_ms);
+            invert_rotate(&mut fb, self.invert, self.rotate180);
+        }
         fb
     }
 }
@@ -78,6 +97,68 @@ mod tests {
         for t in [0, 33, 66, 1000] {
             assert!(e.render(t) == fresh.render(t));
         }
+    }
+
+    #[test]
+    fn invert_rotate_matches_the_engine() {
+        // The simulator's own invert/rotate180 (used with drawings) must equal the engine's.
+        for (invert, rotate180) in [(true, false), (false, true), (true, true)] {
+            let face = FaceDef {
+                invert,
+                rotate180,
+                cyclops: true,
+                eye_gap: 30,
+                eye_y: -9,
+                ..presets()[0].clone()
+            };
+            let upright = FaceDef {
+                invert: false,
+                rotate180: false,
+                ..face.clone()
+            };
+            let (mut a, mut b) = (Engine::new(&face, 5), Engine::new(&upright, 5));
+            for t in [0, 400, 1700] {
+                let mut fb = b.render(t);
+                invert_rotate(&mut fb, invert, rotate180);
+                assert!(
+                    a.render(t) == fb,
+                    "invert {invert} rotate {rotate180} t {t}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn drawing_replaces_or_overlays() {
+        use crate::drawing::{DrawMode, Frame};
+        let mut dot = vec![0u8; FB_SIZE];
+        dot[0] = 1; // pixel (0, 0)
+        let base = presets()[0].clone();
+        let mut face = FaceDef {
+            drawing: Some(Drawing {
+                mode: DrawMode::Replace,
+                frame_ms: 500,
+                frames: vec![Frame(dot.clone())],
+            }),
+            ..base.clone()
+        };
+        let fb = Engine::new(&face, 1).render(100);
+        assert_eq!(fb[0], 1);
+        assert_eq!(fb.iter().map(|b| b.count_ones()).sum::<u32>(), 1);
+
+        face.drawing.as_mut().unwrap().mode = DrawMode::Over;
+        let plain = Engine::new(&base, 1).render(100);
+        let over = Engine::new(&face, 1).render(100);
+        assert_eq!(over[0], plain[0] | 1);
+        assert_eq!(over[1..], plain[1..]);
+
+        // Panel flags still apply: rotate180 moves the dot to (127, 63), invert flips it.
+        face.drawing.as_mut().unwrap().mode = DrawMode::Replace;
+        face.rotate180 = true;
+        face.invert = true;
+        let fb = Engine::new(&face, 1).render(0);
+        assert!(!pixel(&fb, 127, 63));
+        assert!(pixel(&fb, 0, 0));
     }
 
     #[test]

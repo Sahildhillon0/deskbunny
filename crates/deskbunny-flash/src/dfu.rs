@@ -416,13 +416,7 @@ impl DfuBackend for NusbBackend {
     fn present(&self, ids: &[(u16, u16)]) -> bool {
         use nusb::MaybeFuture;
         match nusb::list_devices().wait() {
-            Ok(it) => {
-                let devices: Vec<_> = it.collect();
-                crate::ports::log_arduino_usb(&devices);
-                devices
-                    .iter()
-                    .any(|d| ids.contains(&(d.vendor_id(), d.product_id())))
-            }
+            Ok(mut it) => it.any(|d| ids.contains(&(d.vendor_id(), d.product_id()))),
             Err(e) => {
                 log::warn!("Could not list USB devices: {e}");
                 false
