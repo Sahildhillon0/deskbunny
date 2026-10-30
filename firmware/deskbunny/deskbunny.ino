@@ -1,13 +1,19 @@
-// DeskBunny firmware: animated face on a 128x64 SSD1306 over bit-banged SPI.
+// DeskBunny firmware: animated face on a 128x64 SSD1306 over I2C or
+// bit-banged SPI (detected at boot).
 // Contract: docs/ARCHITECTURE.md. No libraries beyond the Arduino core.
 //
 // The face engine (deskbunny_engine.c/.h) lives in engine/; firmware/build.sh
 // copies it next to this sketch before compiling. To build by hand, copy
 // engine/deskbunny_engine.c and engine/deskbunny_engine.h into this folder.
 //
-// Pins (every board): CLK 13, MOSI 11, CS 10, DC 9, RES 8.
+// I2C: the board's SDA/SCL pins (Uno/Nano/Pro Mini/R4 A4/A5, Mega 20/21,
+// Leonardo/Micro 2/3), address 0x3C or 0x3D, RES 8 if the module has one.
+// SPI (every board): CLK 13, MOSI 11, CS 10, DC 9, RES 8.
 
 #include <Arduino.h>
+#if !defined(__AVR__)
+#include <Wire.h>
+#endif
 #include "deskbunny_engine.h"
 
 #define DB_FW_VERSION "0.1.8"
@@ -91,6 +97,122 @@ static uint32_t lastFrame;
 static uint8_t artMode;   // DB_ART_OFF / REPLACE / OVER
 static uint8_t artFrames; // 1..DB_ART_FRAMES when artMode != DB_ART_OFF
 static uint16_t artMs;
+static uint8_t i2cAddr; // 0: the panel is on SPI
+
+// ---------------------------------------------------------------------------
+// I2C. The panel's control byte says what follows: 0x00 commands, 0x40 data.
+// AVR drives the TWI unit through its registers (no Wire: no 32-byte buffer,
+// so a whole page goes out in one transfer); other cores use Wire. Every wait
+// is bounded, so a missing or stuck panel can't hang the board.
+// ---------------------------------------------------------------------------
+static const uint8_t OLED_I2C_ADDRS[2] = { 0x3C, 0x3D };
+
+#if defined(__AVR__)
+static bool twiWait()
+{
+  uint16_t n = 0;
+  while (!(TWCR & _BV(TWINT))) {
+    if (++n == 0) return false;
+  }
+  return true;
+}
+
+static void twiStop()
+{
+  TWCR = _BV(TWINT) | _BV(TWSTO) | _BV(TWEN);
+  uint16_t n = 0;
+  while ((TWCR & _BV(TWSTO)) && ++n) {}
+}
+
+// START + address; true when the panel ACKs.
+static bool twiStart(uint8_t addr)
+{
+  TWCR = _BV(TWINT) | _BV(TWSTA) | _BV(TWEN);
+  if (!twiWait()) return false;
+  uint8_t st = TWSR & 0xF8;
+  if (st != 0x08 && st != 0x10) return false; // START / repeated START sent
+  TWDR = (uint8_t)(addr << 1);
+  TWCR = _BV(TWINT) | _BV(TWEN);
+  if (!twiWait()) return false;
+  return (TWSR & 0xF8) == 0x18; // SLA+W ACKed
+}
+
+static void twiByte(uint8_t d)
+{
+  TWDR = d;
+  TWCR = _BV(TWINT) | _BV(TWEN);
+  twiWait();
+}
+
+static void i2cBegin()
+{
+  pinMode(SDA, INPUT_PULLUP); // weak, but enough for a short run of wire
+  pinMode(SCL, INPUT_PULLUP);
+  TWSR = 0;                                     // prescaler 1
+  TWBR = (uint8_t)((F_CPU / 400000UL - 16) / 2); // 400 kHz
+  TWCR = _BV(TWEN);
+}
+
+static bool i2cProbe(uint8_t addr)
+{
+  bool ack = twiStart(addr);
+  twiStop();
+  return ack;
+}
+
+static void i2cEnd() { twiStop(); }
+static void i2cRelease() { TWCR = 0; }
+
+static void i2cOpen(uint8_t ctrl)
+{
+  twiStart(i2cAddr);
+  twiByte(ctrl);
+}
+
+#define i2cByte(d) twiByte(d)
+#else
+#if defined(I2C_BUFFER_LENGTH) && I2C_BUFFER_LENGTH > 32
+#define DB_WIRE_CHUNK (I2C_BUFFER_LENGTH > 255 ? 255 : I2C_BUFFER_LENGTH) // R4: 255
+#else
+#define DB_WIRE_CHUNK 32 // Wire's classic buffer
+#endif
+static uint8_t i2cCtrl, i2cCount;
+
+static void i2cBegin()
+{
+  Wire.begin();
+  Wire.setClock(400000);
+}
+
+static bool i2cProbe(uint8_t addr)
+{
+  Wire.beginTransmission(addr);
+  return Wire.endTransmission() == 0;
+}
+
+static void i2cEnd() { Wire.endTransmission(); }
+static void i2cRelease() { Wire.end(); }
+
+static void i2cOpen(uint8_t ctrl)
+{
+  i2cCtrl = ctrl;
+  Wire.beginTransmission(i2cAddr);
+  Wire.write(ctrl);
+  i2cCount = 1;
+}
+
+// Wire buffers each transfer; split long runs, repeating the control byte
+// (the panel's column pointer carries on where it stopped).
+static void i2cByte(uint8_t d)
+{
+  if (i2cCount == DB_WIRE_CHUNK) {
+    Wire.endTransmission();
+    i2cOpen(i2cCtrl);
+  }
+  Wire.write(d);
+  i2cCount++;
+}
+#endif
 
 // ---------------------------------------------------------------------------
 // Bit-banged SPI. On AVR the pins are driven through their PORT registers
@@ -164,22 +286,60 @@ static void spiByte(uint8_t d)
 #define DC_DATA() digitalWrite(PIN_OLED_DC, HIGH)
 #endif
 
-static void oledCommand(uint8_t cmd)
+// ---------------------------------------------------------------------------
+// Panel transfers, whichever bus it is on.
+// ---------------------------------------------------------------------------
+static void oledOpen(bool data)
 {
-  CS_LOW();
-  DC_CMD();
-  spiByte(cmd);
-  CS_HIGH();
+  if (i2cAddr) {
+    i2cOpen(data ? 0x40 : 0x00);
+  } else {
+    CS_LOW();
+    if (data) DC_DATA();
+    else DC_CMD();
+  }
 }
 
-// Init sequence from the original working sketch (firmware/reference/).
-static void oledInit()
+static inline void oledByte(uint8_t d)
 {
+  if (i2cAddr) i2cByte(d);
+  else spiByte(d);
+}
+
+static void oledClose()
+{
+  if (i2cAddr) i2cEnd();
+  else CS_HIGH();
+}
+
+static void oledCommand(uint8_t cmd)
+{
+  oledOpen(false);
+  oledByte(cmd);
+  oledClose();
+}
+
+// Reset the panel, then look for it on I2C; nobody answering means SPI.
+static void oledDetect()
+{
+  pinMode(PIN_OLED_RES, OUTPUT);
+  digitalWrite(PIN_OLED_RES, HIGH); delay(10);
+  digitalWrite(PIN_OLED_RES, LOW);  delay(50);
+  digitalWrite(PIN_OLED_RES, HIGH); delay(50);
+
+  i2cBegin();
+  for (uint8_t i = 0; i < sizeof(OLED_I2C_ADDRS); i++) {
+    if (i2cProbe(OLED_I2C_ADDRS[i])) {
+      i2cAddr = OLED_I2C_ADDRS[i];
+      return;
+    }
+  }
+  i2cRelease();
+
   pinMode(PIN_OLED_CLK, OUTPUT);
   pinMode(PIN_OLED_MOSI, OUTPUT);
   pinMode(PIN_OLED_CS, OUTPUT);
   pinMode(PIN_OLED_DC, OUTPUT);
-  pinMode(PIN_OLED_RES, OUTPUT);
 #if defined(__AVR__)
   pinSetup(PIN_OLED_CLK, &clkReg, &clkBit);
   pinSetup(PIN_OLED_MOSI, &mosiReg, &mosiBit);
@@ -188,9 +348,12 @@ static void oledInit()
 #endif
   digitalWrite(PIN_OLED_CS, HIGH);
   digitalWrite(PIN_OLED_CLK, HIGH);
-  digitalWrite(PIN_OLED_RES, HIGH); delay(10);
-  digitalWrite(PIN_OLED_RES, LOW);  delay(50);
-  digitalWrite(PIN_OLED_RES, HIGH); delay(50);
+}
+
+// Init sequence from the original working sketch (firmware/reference/).
+static void oledInit()
+{
+  oledDetect();
   oledCommand(0xAE);
   oledCommand(0xD5); oledCommand(0x80);
   oledCommand(0xA8); oledCommand(0x3F);
@@ -230,11 +393,10 @@ static void oledPush(const uint8_t *buf)
     oledCommand((uint8_t)(0xB0 + page));
     oledCommand(0x00); // column 0, low nibble
     oledCommand(0x10); // column 0, high nibble
-    CS_LOW();
-    DC_DATA();
+    oledOpen(true);
     const uint8_t *p = buf + (uint16_t)page * DB_W;
-    for (uint8_t x = 0; x < DB_W; x++) spiByte(p[x]);
-    CS_HIGH();
+    for (uint8_t x = 0; x < DB_W; x++) oledByte(p[x]);
+    oledClose();
   }
 }
 

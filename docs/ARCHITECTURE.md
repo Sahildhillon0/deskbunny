@@ -150,8 +150,17 @@ result is the same pixels.
 
 ## Firmware behaviour
 
-- Pins (bit-banged SPI, same on every board): CLK 13, MOSI 11, CS 10, DC 9,
-  RES 8. Init sequence from the original working sketch.
+- Display bus, detected at boot: pulse RES (pin 8), then probe I2C 0x3C and
+  0x3D on the board's hardware SDA/SCL at 400 kHz. An ACK selects I2C at that
+  address; no answer selects bit-banged SPI. Same image for both wirings.
+  - I2C: SDA/SCL = A4/A5 (Uno, Nano, Pro Mini, Uno R4), 20/21 (Mega),
+    2/3 (Leonardo, Micro). Control byte 0x00 before commands, 0x40 before
+    data. AVR drives the TWI registers directly (no Wire, one transfer per
+    page); other cores use Wire. Every bus wait is bounded.
+  - SPI (same on every board): CLK 13, MOSI 11, CS 10, DC 9, RES 8.
+  - Init sequence from the original working sketch, for both buses.
+  - I2C at 400 kHz takes ~25 ms per frame on AVR, so I2C boards run at
+    ~20-25 fps instead of 30 (the frame clock resyncs when it falls behind).
 - Loop: render at ~30 fps into a 1024-byte framebuffer, composite the drawing
   (Drawing blob v1), push all 8 pages. Frames are read straight from flash
   (PROGMEM on AVR): the drawing costs no RAM.

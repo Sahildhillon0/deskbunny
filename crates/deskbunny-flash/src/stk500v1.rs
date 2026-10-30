@@ -26,6 +26,12 @@ const READ_SIGN: u8 = 0x75;
 /// Optiboot gives up ~1 s after reset; sync attempts must fit in that window.
 const SYNC_ATTEMPTS: usize = 6;
 const SYNC_TIMEOUT: Duration = Duration::from_millis(150);
+/// Some bootloaders flash the LED for ~400 ms before reading the UART. A second
+/// sync sent in that time overruns its 2-byte FIFO, and the leftover bytes make
+/// Optiboot's framing check fail and jump to the sketch right after it replies.
+/// So the first attempt waits for the slowest start; a ready bootloader still
+/// answers at once.
+const SYNC_FIRST_TIMEOUT: Duration = Duration::from_millis(600);
 const CMD_TIMEOUT: Duration = Duration::from_millis(1000);
 
 pub struct Stk500v1 {
@@ -217,8 +223,26 @@ pub(crate) fn reset(host: &dyn SerialHost, link: &mut dyn SerialLink) -> Result<
     Ok(())
 }
 
+/// Some clone FT232 adapters, opened while the sketch is streaming text, get
+/// stuck re-delivering one USB packet (hundreds of KB/s of the same bytes).
+/// A flush, a drain or reopening the port doesn't clear it. DeskBunny's own
+/// firmware is silent on serial, so this hits only when flashing over a
+/// chatty sketch.
+const ADAPTER_STUCK: &str = "The board's USB-serial chip keeps repeating old data instead of reaching the bootloader. Some clone FT232 chips do this when the program on the board is sending text non-stop. Unplug the board, plug it back in, and flash again.";
+
 fn sync(host: &dyn SerialHost, link: &mut dyn SerialLink) -> Result<()> {
-    for _ in 0..SYNC_ATTEMPTS {
+    let e = |e| crate::link::io_err("Serial setup failed", e);
+    // The same printable reply over and over is stale sketch output, not a
+    // bootloader (one at the wrong baud sends garbled bytes, not text).
+    let mut stale: Option<Vec<u8>> = None;
+    let mut repeats = 0;
+    for attempt in 0..SYNC_ATTEMPTS {
+        link.set_timeout(if attempt == 0 {
+            SYNC_FIRST_TIMEOUT
+        } else {
+            SYNC_TIMEOUT
+        })
+        .map_err(e)?;
         let _ = link.clear_input();
         write_all(link, &[GET_SYNC, CRC_EOP])?;
         match read_n(link, 2, String::new) {
@@ -228,7 +252,19 @@ fn sync(host: &dyn SerialHost, link: &mut dyn SerialLink) -> Result<()> {
                 let _ = link.clear_input();
                 return Ok(());
             }
-            Ok(_) | Err(FlashError::NoResponse(_)) => host.sleep(Duration::from_millis(20)),
+            Ok(r) => {
+                if r.iter().all(|b| (0x20..0x7F).contains(b)) && stale.as_ref() == Some(&r) {
+                    repeats += 1;
+                    if repeats >= 2 {
+                        return Err(FlashError::Protocol(ADAPTER_STUCK.into()));
+                    }
+                } else {
+                    repeats = 0;
+                }
+                stale = Some(r);
+                host.sleep(Duration::from_millis(20));
+            }
+            Err(FlashError::NoResponse(_)) => host.sleep(Duration::from_millis(20)),
             Err(e) => return Err(e),
         }
     }
@@ -435,6 +471,29 @@ mod tests {
             opens.iter().map(|o| o.1).collect::<Vec<_>>(),
             vec![115200, 57600]
         );
+    }
+
+    #[test]
+    fn stuck_adapter_says_replug() {
+        /// A clone FT232 stuck re-delivering one packet of old sketch output.
+        struct StuckAdapter;
+        impl Device for StuckAdapter {
+            fn write(&mut self, _data: &[u8]) {}
+            fn read(&mut self, buf: &mut [u8]) -> usize {
+                for (i, b) in buf.iter_mut().enumerate() {
+                    *b = b"it"[i % 2];
+                }
+                buf.len()
+            }
+        }
+        let host = Arc::new(MockHost::new(Box::new(StuckAdapter)));
+        let up = Stk500v1::new(board("nano"), host);
+        let log = ProgressLog::default();
+        let e = up
+            .upload("/dev/ttyUSB0", &test_image(0, 3000), &log.cb())
+            .unwrap_err();
+        assert!(matches!(e, FlashError::Protocol(_)), "{e}");
+        assert!(e.to_string().contains("Unplug the board"), "{e}");
     }
 
     #[test]

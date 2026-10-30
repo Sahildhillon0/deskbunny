@@ -6,7 +6,8 @@ to show up. You can open it again any time with the **?** button next to the
 DeskBunny name, top left.
 
 This page is the same guide in writing, for when you'd rather do it by hand.
-It covers the software only. Wiring the OLED is in the firmware notes.
+It covers the software only. Wiring the OLED (I2C or SPI) is in the
+[README](../README.md#wiring).
 
 **What you need:** your DeskBunny (an Arduino with the 0.96" SSD1306 OLED wired
 up) and a USB cable that carries data. Some phone cables only charge.

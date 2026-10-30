@@ -13,14 +13,38 @@ need the Arduino IDE.
 - **One-click flashing** in pure Rust: STK500v1/v2, AVR109, SAM-BA and DFU.
 - **Boards:** Uno R3, Nano (old and new bootloader), Pro Mini, Mega 2560,
   Leonardo, Micro, Uno R4 Minima, Uno R4 WiFi.
-- **Display driver without a library:** bit-banged SPI on pins CLK 13,
-  MOSI 11, CS 10, DC 9, RES 8.
+- **Display driver without a library:** I2C or SPI, detected at boot. See
+  [Wiring](#wiring).
 - **Mood cycle:** loop through moods you pick, in order or at random, with a
   blink at every change.
 - **Draw your own screen:** a pixel editor (pen, shapes, fill, text, image
   and animated GIF import) for up to four animation frames, shown instead of
   the face or on top of it. Stored in flash, so it costs the board no RAM.
 - **Windows, macOS and Linux**, with a first-run setup guide and in-app updates.
+
+## Wiring
+
+The 0.96" SSD1306 128x64 OLED works over I2C or SPI. The firmware checks for
+an I2C display at boot and falls back to SPI, so either wiring runs the same
+firmware. Power the display from **5V** (or 3.3V if your module says so) and GND.
+
+**I2C** (4-pin modules: GND VCC SCL SDA)
+
+| Display | Uno / Nano / Pro Mini / Uno R4 | Mega 2560 | Leonardo / Micro |
+|---|---|---|---|
+| SDA | A4 (or the SDA header) | 20 | 2 |
+| SCL | A5 (or the SCL header) | 21 | 3 |
+| RES (7-pin modules only) | 8 | 8 | 8 |
+
+Address 0x3C or 0x3D, both found automatically. A 7-pin module set to I2C
+(its resistor jumpers moved) wires D0 to SCL, D1 to SDA, RES to pin 8, and DC
+and CS to GND.
+
+**SPI** (7-pin modules: GND VCC D0 D1 RES DC CS), same pins on every board:
+
+| Display | D0 (CLK) | D1 (MOSI) | RES | DC | CS |
+|---|---|---|---|---|---|
+| Arduino pin | 13 | 11 | 8 | 9 | 10 |
 
 ## Get started
 
