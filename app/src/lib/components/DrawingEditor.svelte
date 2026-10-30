@@ -60,7 +60,7 @@
     move: "Drag to move the whole frame. Pixels pushed off the edge are lost.",
   };
 
-  const MODE_LABEL: Record<DrawMode, string> = { replace: "Drawing only", over: "Over the face" };
+  const MODE_LABEL: Record<DrawMode, string> = { replace: "Drawing only", over: "Over the drones" };
 
   // ---------------------------------------------------------------- working copy
 
@@ -723,7 +723,7 @@
             <p class="muted">Add frames for a short animation (up to {DRAW_FRAMES}).</p>
           {/if}
           {#if mode === "over"}
-            <div class="opts"><Switch label="Show the face" bind:checked={showFace} hint="Draw around the face; it is not part of the drawing" /></div>
+            <div class="opts"><Switch label="Show the drones" bind:checked={showFace} hint="Draw around the drones; they are not part of the drawing" /></div>
           {/if}
         </section>
 
@@ -770,7 +770,7 @@
 
     <footer class="actions">
       <span class="muted">
-        {#if allBlank}Nothing drawn yet: the screen will be {mode === "replace" ? "dark" : "just the face"}.{:else}{frames.length}
+        {#if allBlank}Nothing drawn yet: the screen will be {mode === "replace" ? "dark" : "just the drones"}.{:else}{frames.length}
           {frames.length === 1 ? "frame" : "frames"}{frames.length > 1 ? `, ${secs(frameMs)} each` : ""}. Flash it like any face.{/if}
       </span>
       <span class="spacer"></span>

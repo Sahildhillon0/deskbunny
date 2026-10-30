@@ -128,7 +128,7 @@
       </div>
       <i class="hole tl"></i><i class="hole tr"></i><i class="hole bl"></i><i class="hole br"></i>
     {/if}
-    <div class="glass" role="img" aria-label={`Live preview of ${app.face.name || "the face"} on the 128 by 64 OLED`}>
+    <div class="glass" role="img" aria-label={`Live preview of ${app.face.name || "the drones"} on the 128 by 64 OLED`}>
       <canvas bind:this={canvas} aria-hidden="true"></canvas>
       <span class="sheen" aria-hidden="true"></span>
     </div>

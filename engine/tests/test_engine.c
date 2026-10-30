@@ -158,7 +158,7 @@ static void test_codec(void)
   bad[62] = (uint8_t)(db_crc16(bad, 62) & 0xFF);
   bad[63] = (uint8_t)(db_crc16(bad, 62) >> 8);
   CHECK(db_face_decode(bad, &b) == 0);
-  CHECK(b.mood == DB_MOOD_NEUTRAL && b.overlay == DB_OVERLAY_NONE);
+  CHECK(b.mood == DB_MOOD_HOVER && b.overlay == DB_OVERLAY_NONE);
   CHECK(b.eye_w == 56 && b.eye_h == 8 && b.eye_r == 28 && b.eye_gap == 40 && b.speed == 1);
   CHECK(b.name[0] == 'A' && b.name[1] == ' ');
   CHECK(b.cycle == DB_CYCLE_OFF && b.cycle_flags == DB_CYCLE_FLAG_OVERLAY);
@@ -237,7 +237,7 @@ static void test_display_flags(void)
   int i, x, y, ok;
   db_face_default(&f);
   f.flags |= DB_FLAG_MOUTH;
-  f.overlay = DB_OVERLAY_QUESTION;
+  f.overlay = DB_OVERLAY_GRID;
   db_engine_init(&a, &f, 9);
   f.flags |= DB_FLAG_INVERT;
   db_engine_init(&b, &f, 9);
@@ -254,10 +254,10 @@ static void test_display_flags(void)
   for (y = 0; y < DB_H; y++)
     for (x = 0; x < DB_W; x++) ok &= (px(plain, x, y) == px(other, DB_W - 1 - x, DB_H - 1 - y));
   CHECK(ok);
-  CHECK(popcount_fb(plain) > 500); /* the face is actually drawn */
+  CHECK(popcount_fb(plain) > 500); /* the scene is actually drawn */
 }
 
-/* Every mood draws something and the moods differ from each other. */
+/* Every scene draws something and the scenes differ from each other. */
 static void test_moods_distinct(void)
 {
   static uint8_t frames[DB_MOOD_COUNT][DB_FB_SIZE];
@@ -269,37 +269,38 @@ static void test_moods_distinct(void)
     f.mood = (uint8_t)m;
     f.flags = 0; /* static pose */
     db_engine_init(&e, &f, 1);
-    db_engine_render(&e, 500, frames[m]);
-    CHECK(popcount_fb(frames[m]) > 150);
+    db_engine_render(&e, 5500, frames[m]); /* flip mid-roll, race on screen */
+    CHECK(popcount_fb(frames[m]) > 100);
   }
   for (m = 0; m < DB_MOOD_COUNT; m++)
     for (k = m + 1; k < DB_MOOD_COUNT; k++) CHECK(memcmp(frames[m], frames[k], DB_FB_SIZE) != 0);
 }
 
-/* Blink closes the eyes at some point within blink_max. */
-static void test_blink(void)
+/* The strobe lights the nav lights twice every blink_min, and only then. */
+static void test_strobe(void)
 {
   db_face_t f;
-  db_engine_t e;
-  uint8_t fb[DB_FB_SIZE];
-  uint32_t t;
-  int open_px, min_px = 1 << 30;
+  db_engine_t a, b;
+  uint8_t fa[DB_FB_SIZE], fb[DB_FB_SIZE];
   db_face_default(&f);
+  f.flags = 0;
+  f.blink_min = 20;
+  db_engine_init(&b, &f, 3);
   f.flags = DB_FLAG_BLINK;
-  db_engine_init(&e, &f, 3);
-  db_engine_render(&e, 0, fb);
-  open_px = popcount_fb(fb);
-  for (t = 0; t <= (uint32_t)f.blink_max * 100u + 500u; t += 10) {
-    int n;
-    db_engine_render(&e, t, fb);
-    n = popcount_fb(fb);
-    if (n < min_px) min_px = n;
-  }
-  CHECK(min_px * 8 < open_px);
+  db_engine_init(&a, &f, 3);
+  db_engine_render(&a, 2030, fa); /* first flash of the period at 2000 */
+  db_engine_render(&b, 2030, fb);
+  CHECK(popcount_fb(fa) > popcount_fb(fb));
+  db_engine_render(&a, 2190, fa); /* second flash */
+  db_engine_render(&b, 2190, fb);
+  CHECK(popcount_fb(fa) > popcount_fb(fb));
+  db_engine_render(&a, 2500, fa); /* dark */
+  db_engine_render(&b, 2500, fb);
+  CHECK(memcmp(fa, fb, DB_FB_SIZE) == 0);
 }
 
-/* The mood cycle: moods change on schedule, in order or at random, with a
- * closed-eye frame at each change and the overlay following the mood. */
+/* The scene cycle: scenes change on schedule, in order or at random, the
+ * drones climb out of view at each change and the sky follows the scene. */
 static void test_cycle(void)
 {
   db_face_t f;
@@ -309,39 +310,52 @@ static void test_cycle(void)
   int seen[DB_MOOD_COUNT], k, changes = 0, repeats = 0;
   uint8_t last;
   db_face_default(&f);
-  f.flags = 0; /* no blink, no glance: only the cycle closes the eyes */
+  f.flags = 0; /* no strobe, no drift, no shadow: only the drones are drawn */
   f.cycle = DB_CYCLE_SEQUENCE;
   f.cycle_secs = 2;
   f.cycle_count = 3;
-  f.cycle_moods[0] = DB_MOOD_SAD;
-  f.cycle_moods[1] = DB_MOOD_LOVE;
-  f.cycle_moods[2] = DB_MOOD_HAPPY;
+  f.cycle_moods[0] = DB_MOOD_FLIP;
+  f.cycle_moods[1] = DB_MOOD_SWARM;
+  f.cycle_moods[2] = DB_MOOD_PATROL;
+  f.cycle_flags = 0;
   db_engine_init(&e, &f, 5);
-  CHECK(e.face.mood == DB_MOOD_SAD && e.face.overlay == DB_OVERLAY_TEARS);
+  CHECK(e.face.mood == DB_MOOD_FLIP);
   db_engine_render(&e, 0, fb);
   db_engine_render(&e, 1000, open_fb);
-  CHECK(e.face.mood == DB_MOOD_SAD);
-  db_engine_render(&e, 1990, fb); /* closing for the change at 2000 */
+  CHECK(e.face.mood == DB_MOOD_FLIP);
+  db_engine_render(&e, 1990, fb); /* climbing out for the change at 2000 */
   CHECK(popcount_fb(fb) * 4 < popcount_fb(open_fb));
   db_engine_render(&e, 2000, fb);
-  CHECK(e.face.mood == DB_MOOD_LOVE && e.face.overlay == DB_OVERLAY_HEARTS);
+  CHECK(e.face.mood == DB_MOOD_SWARM);
+  db_engine_render(&e, 3000, fb);
+  CHECK(popcount_fb(fb) > 150); /* back in view */
   db_engine_render(&e, 4000, fb);
-  CHECK(e.face.mood == DB_MOOD_HAPPY && e.face.overlay == DB_OVERLAY_NONE);
+  CHECK(e.face.mood == DB_MOOD_PATROL);
   db_engine_render(&e, 6000, fb);
-  CHECK(e.face.mood == DB_MOOD_SAD); /* wraps */
+  CHECK(e.face.mood == DB_MOOD_FLIP); /* wraps */
   db_engine_render(&e, 13000, fb);  /* far behind: one step, then back on schedule */
-  CHECK(e.face.mood == DB_MOOD_LOVE);
+  CHECK(e.face.mood == DB_MOOD_SWARM);
   CHECK(e.cycle_at == 15000u);
 
-  /* overlay stays put without the flag */
+  /* with the flag, the sky follows the scene */
+  f.cycle_flags = DB_CYCLE_FLAG_OVERLAY;
+  db_engine_init(&e, &f, 5);
+  CHECK(e.face.overlay == DB_OVERLAY_NONE);
+  db_engine_render(&e, 0, fb);
+  db_engine_render(&e, 2000, fb);
+  CHECK(e.face.overlay == DB_OVERLAY_STARS);
+  db_engine_render(&e, 4000, fb);
+  CHECK(e.face.overlay == DB_OVERLAY_CITY);
+
+  /* and stays put without it */
   f.cycle_flags = 0;
-  f.overlay = DB_OVERLAY_ZZZ;
+  f.overlay = DB_OVERLAY_RAIN;
   db_engine_init(&e, &f, 5);
   db_engine_render(&e, 0, fb);
   db_engine_render(&e, 2000, fb);
-  CHECK(e.face.overlay == DB_OVERLAY_ZZZ);
+  CHECK(e.face.overlay == DB_OVERLAY_RAIN);
 
-  /* random over all moods: covers them, never repeats back to back */
+  /* random over all scenes: covers them, never repeats back to back */
   db_face_default(&f);
   f.cycle = DB_CYCLE_RANDOM;
   f.cycle_secs = 1;
@@ -358,12 +372,12 @@ static void test_cycle(void)
   for (k = 0; k < DB_MOOD_COUNT; k++) CHECK(seen[k]);
   CHECK(changes > 390 && repeats == 0);
 
-  /* a one-mood list never gets stuck looking for a different mood */
+  /* a one-scene list never gets stuck looking for a different scene */
   f.cycle_count = 1;
-  f.cycle_moods[0] = DB_MOOD_DIZZY;
+  f.cycle_moods[0] = DB_MOOD_CHARGE;
   db_engine_init(&r, &f, 1);
   for (t = 0; t < 5000u; t += 100) db_engine_render(&r, t, fb);
-  CHECK(r.face.mood == DB_MOOD_DIZZY);
+  CHECK(r.face.mood == DB_MOOD_CHARGE);
 }
 
 /* Render through an exact 1024-byte heap buffer (ASan flags any overrun)
@@ -415,7 +429,7 @@ int main(void)
   test_determinism();
   test_display_flags();
   test_moods_distinct();
-  test_blink();
+  test_strobe();
   test_cycle();
   test_bounds();
   printf("sizeof(db_engine_t) = %u (host), sizeof(db_face_t) = %u\n",

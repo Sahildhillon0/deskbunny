@@ -308,10 +308,10 @@
           <div class="eyes happy" aria-hidden="true"><span></span><span></span></div>
           <h1 id="setup-title" tabindex="-1" bind:this={heading}>You're all set</h1>
           <ol class="howto">
-            <li><span class="n">1</span><span>Pick a face on the left, or tweak one in the editor.</span></li>
+            <li><span class="n">1</span><span>Pick a drone scene on the left, or tweak one in the editor.</span></li>
             <li><span class="n">2</span><span>Check the port and board at the bottom. DeskBunny picks them when it can.</span></li>
             <li>
-              <span class="n">3</span><span>Press <strong>Flash to DeskBunny</strong>. Your bunny keeps the face, even unplugged from the computer.</span>
+              <span class="n">3</span><span>Press <strong>Flash to DeskBunny</strong>. Your board keeps the scene, even unplugged from the computer.</span>
             </li>
           </ol>
           <p class="hint">Need this again? It's under the <Icon name="help" size={13} /> button next to the DeskBunny name.</p>
@@ -334,7 +334,7 @@
             {step === 0 ? "Get started" : step === 2 && !found ? "Continue without a board" : "Continue"}
           </button>
         {:else}
-          <button class="btn primary" onclick={() => setup.close()}>Start making faces</button>
+          <button class="btn primary" onclick={() => setup.close()}>Start flying</button>
         {/if}
       </div>
     </footer>

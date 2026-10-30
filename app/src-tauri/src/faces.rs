@@ -154,7 +154,7 @@ mod tests {
             .contains("not a DeskBunny face"));
         v["mood"] = "grumpy".into();
         assert!(parse_import(&v.to_string()).is_err());
-        v["mood"] = "angry".into();
+        v["mood"] = "patrol".into();
         v["name"] = "!!!".into();
         assert!(parse_import(&v.to_string()).unwrap_err().contains("empty"));
     }

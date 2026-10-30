@@ -443,23 +443,27 @@ static void fbSet(int16_t x, int16_t y)
   fb[(uint16_t)(y >> 3) * DB_W + x] |= (uint8_t)(1u << (y & 7));
 }
 
-static void drawText(const char *s, int16_t y, uint8_t scale)
+// Centred 5x7 text. big: double height, columns 2,1,2,1,2 px wide (8 px per
+// glyph instead of 10), so twelve letters still fit across the 128 px panel.
+static void drawText(const char *s, int16_t y, bool big)
 {
+  static const uint8_t kBigW[5] = { 2, 1, 2, 1, 2 };
+  const uint8_t adv = big ? 9 : 6, sy = big ? 2 : 1;
   int16_t len = (int16_t)strlen(s);
-  int16_t x = (int16_t)((DB_W - (len * 6 - 1) * scale) / 2);
-  for (; *s; s++, x = (int16_t)(x + 6 * scale)) {
+  int16_t x = (int16_t)((DB_W - (len * adv - 1)) / 2);
+  for (; *s; s++, x = (int16_t)(x + adv)) {
     char c = *s;
-    if (c >= 'a' && c <= 'z') c = (char)(c - 'a' + 'A');
     if (c < DB_FONT_FIRST || c > DB_FONT_LAST) c = ' ';
     const uint8_t *g = DB_FONT5X7 + (uint16_t)(c - DB_FONT_FIRST) * 5;
+    int16_t cx = x;
     for (uint8_t col = 0; col < 5; col++) {
-      uint8_t bits = DB_ROM_BYTE(g + col);
+      uint8_t bits = DB_ROM_BYTE(g + col), w = big ? kBigW[col] : 1;
       for (uint8_t row = 0; row < 7; row++) {
         if (!(bits & (1u << row))) continue;
-        for (uint8_t dy = 0; dy < scale; dy++)
-          for (uint8_t dx = 0; dx < scale; dx++)
-            fbSet((int16_t)(x + col * scale + dx), (int16_t)(y + row * scale + dy));
+        for (uint8_t dy = 0; dy < sy; dy++)
+          for (uint8_t dx = 0; dx < w; dx++) fbSet((int16_t)(cx + dx), (int16_t)(y + row * sy + dy));
       }
+      cx = (int16_t)(cx + w);
     }
   }
 }
@@ -467,10 +471,8 @@ static void drawText(const char *s, int16_t y, uint8_t scale)
 static void showSplash()
 {
   memset(fb, 0, sizeof(fb));
-  drawText("DESKBUNNY", 14, 2);
-  // the face's name, or the firmware version when the name says nothing new
-  if (face.name[0] && strcmp(face.name, "DESKBUNNY") != 0) drawText(face.name, 40, 1);
-  else drawText("V" DB_FW_VERSION, 40, 1);
+  drawText("Best Regards", 17, false);
+  drawText("Zenithratech", 31, true);
   oledPush(fb);
   delay(1200);
 }

@@ -1,5 +1,5 @@
 // Browser-only stand-in for the Tauri backend, used when the page is not running
-// inside Tauri (`npm run dev` in a normal browser). The face drawing here is a
+// inside Tauri (`npm run dev` in a normal browser). The drone drawing here is a
 // rough JS approximation for layout work; the real app always renders with the
 // C engine over IPC. Never import this directly: go through ./api.ts.
 
@@ -11,20 +11,22 @@ const delay = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 // ---------------------------------------------------------------- presets
 
 const PRESET_SPECS: [string, Mood, Partial<FaceDef>][] = [
-  ["WATCHING", "neutral", {}],
-  ["HAPPY", "happy", { mouth: true }],
-  ["GRUMPY", "angry", { overlay: "anger", lookX: 10 }],
-  ["BLUE", "sad", { overlay: "tears", lookAround: false }],
-  ["SLEEPY", "sleepy", { overlay: "zzz", lookAround: false, speed: 3 }],
-  ["WOW", "surprised", { eyeW: 32, eyeH: 40, eyeR: 16 }],
-  ["SMITTEN", "love", { overlay: "hearts" }],
-  ["SUS", "suspicious", { lookX: 22, lookY: 2 }],
-  ["HYPED", "excited", { overlay: "sparkles", speed: 8 }],
-  ["MEH", "bored", { speed: 3, lookX: 12 }],
-  ["SPOOKED", "scared", { overlay: "sweat", speed: 8 }],
-  ["DIZZY", "dizzy", { overlay: "question" }],
-  ["MOODY", "neutral", { mouth: true, cycle: "random", cycleSeconds: 8 }],
-  ["MY DAY", "neutral", { mouth: true, cycle: "sequence", cycleSeconds: 12, cycleMoods: ["neutral", "happy", "excited", "bored", "sleepy"] }],
+  ["HOVER", "hover", { mouth: true }],
+  ["PATROL", "patrol", { eyeW: 30, lookAround: false, overlay: "city" }],
+  ["LIFTOFF", "takeoff", { overlay: "hills" }],
+  ["STUNT", "flip", { speed: 6, mouth: true }],
+  ["ORBIT", "orbit", { lookAround: false, overlay: "clouds" }],
+  ["SQUADRON", "formation", { eyeGap: 12, mouth: true }],
+  ["COURIER", "delivery", { overlay: "city" }],
+  ["RACER", "race", { eyeW: 32, speed: 7, lookAround: false, overlay: "wind" }],
+  ["SEARCH", "scan", { overlay: "grid" }],
+  ["SWARM", "swarm", { lookAround: false, overlay: "stars" }],
+  ["TOP VIEW", "topdown", { eyeW: 40, speed: 4 }],
+  ["RECHARGE", "charge", {}],
+  ["STORM", "topdown", { eyeW: 44, blinkMin: 10, cyclops: true, overlay: "rain" }],
+  ["HEAVY LIFT", "hover", { eyeW: 56, eyeY: 4, speed: 3, cyclops: true, mouth: true }],
+  ["AIRSHOW", "hover", { mouth: true, cycle: "random", cycleSeconds: 10 }],
+  ["NIGHT SHIFT", "takeoff", { cycle: "sequence", cycleSeconds: 14, cycleMoods: ["takeoff", "patrol", "delivery", "scan", "charge"] }],
 ];
 
 export async function listPresets(): Promise<FaceDef[]> {
@@ -137,7 +139,7 @@ export async function flash(port: string, boardId: string, face: FaceDef): Promi
 
 export async function deviceInfo(port: string): Promise<string | null> {
   await delay(200);
-  return port ? "DESKBUNNY 0.1.0 atmega328p WATCHING" : null;
+  return port ? "DESKBUNNY 0.1.0 atmega328p HOVER" : null;
 }
 
 // ---------------------------------------------------------------- saved faces
@@ -266,57 +268,37 @@ function rand(n: number): number {
 class Canvas1 {
   constructor(public fb: Uint8Array) {}
   set(x: number, y: number, on = true) {
-    x |= 0;
-    y |= 0;
+    x = Math.round(x);
+    y = Math.round(y);
     if (x < 0 || y < 0 || x >= W || y >= H) return;
     const i = (y >> 3) * W + x;
     if (on) this.fb[i] |= 1 << (y & 7);
     else this.fb[i] &= ~(1 << (y & 7));
   }
-  roundRect(x: number, y: number, w: number, h: number, r: number, on = true) {
-    r = Math.max(0, Math.min(r, w / 2, h / 2));
-    for (let j = 0; j < h; j++) {
-      for (let i = 0; i < w; i++) {
-        const dx = i < r ? r - i - 0.5 : i >= w - r ? i - (w - r) + 0.5 : 0;
-        const dy = j < r ? r - j - 0.5 : j >= h - r ? j - (h - r) + 0.5 : 0;
-        if (dx * dx + dy * dy <= r * r) this.set(x + i, y + j, on);
-      }
-    }
-  }
-  /** Clears every pixel of the rect where pred(x, y) holds. */
-  carve(x: number, y: number, w: number, h: number, pred: (px: number, py: number) => boolean) {
-    for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) if (pred(x + i, y + j)) this.set(x + i, y + j, false);
+  line(x0: number, y0: number, x1: number, y1: number) {
+    const n = Math.max(1, Math.ceil(Math.max(Math.abs(x1 - x0), Math.abs(y1 - y0))));
+    for (let i = 0; i <= n; i++) this.set(x0 + ((x1 - x0) * i) / n, y0 + ((y1 - y0) * i) / n);
   }
   ring(cx: number, cy: number, r: number) {
-    for (let a = 0; a < 64; a++) {
-      const t = (a / 64) * Math.PI * 2;
-      this.set(Math.round(cx + Math.cos(t) * r), Math.round(cy + Math.sin(t) * r));
+    for (let a = 0; a < 48; a++) {
+      const t = (a / 48) * Math.PI * 2;
+      this.set(cx + Math.cos(t) * r, cy + Math.sin(t) * r);
     }
-  }
-  sprite(x: number, y: number, rows: string[]) {
-    rows.forEach((row, j) => [...row].forEach((c, i) => c === "#" && this.set(x + i, y + j)));
   }
 }
 
-const HEART = [".##.##.", "#######", "#######", ".#####.", "..###..", "...#..."];
-const SMALL_HEART = ["##.##", "#####", ".###.", "..#.."];
-const Z = ["####", "..#.", ".#..", "####"];
-const DROP = ["..#..", ".###.", "#####", "#####", ".###."];
-const ANGER = ["#.#", "###", "#.#"];
-const SPARK = ["..#..", "..#..", "#####", "..#..", "..#.."];
-const QUESTION = [".###.", "#...#", "...#.", "..#..", ".....", "..#.."];
-
 const MOOD_OVERLAY: Partial<Record<Mood, FaceDef["overlay"]>> = {
-  angry: "anger",
-  sad: "tears",
-  sleepy: "zzz",
-  love: "hearts",
-  suspicious: "question",
-  excited: "sparkles",
-  scared: "sweat",
+  patrol: "city",
+  delivery: "city",
+  takeoff: "hills",
+  orbit: "clouds",
+  charge: "clouds",
+  race: "wind",
+  scan: "grid",
+  swarm: "stars",
 };
 
-/** The face with the mood cycle applied at tMs (no closed-eye transition in the mock). */
+/** The scene with the cycle applied at tMs (no climb-out transition in the mock). */
 function cycledFace(sim: Sim, tMs: number): FaceDef {
   const f = sim.face;
   if (f.cycle === "off") return f;
@@ -327,13 +309,33 @@ function cycledFace(sim: Sim, tMs: number): FaceDef {
   return { ...f, mood, overlay: f.cycleOverlay ? (MOOD_OVERLAY[mood] ?? "none") : f.overlay };
 }
 
+/** Side-view quadcopter, s px span, tilt in radians, m = 1 facing right. */
+function drone(c: Canvas1, f: FaceDef, t: number, x: number, y: number, s: number, tilt = 0, m = 1) {
+  const co = Math.cos(tilt);
+  const si = Math.sin(tilt);
+  const L = (x0: number, y0: number, x1: number, y1: number) =>
+    c.line(x + x0 * m * co - y0 * si, y + x0 * m * si + y0 * co, x + x1 * m * co - y1 * si, y + x1 * m * si + y1 * co);
+  const bw = s / 4;
+  const bh = Math.max(1, Math.floor(s / 14));
+  if (f.mouth) for (let i = -s / 2 + (63 - y) / 3; i <= s / 2 - (63 - y) / 3; i += 2) c.set(x + i, 63);
+  for (let j = -bh; j <= bh; j++) L(-bw, j, bw, j);
+  L(-s / 2, -bh, s / 2, -bh);
+  for (const k of [-1, 1]) {
+    const pw = 1 + (s / 5) * Math.abs(Math.cos(t / 8 + k));
+    L(k * s / 2, -bh, k * s / 2, -bh - 2);
+    L(k * s / 2 - pw, -bh - 3, k * s / 2 + pw, -bh - 3);
+    L(k * bw / 2, bh, k * (bw / 2 + s / 9), bh + s / 9);
+  }
+  if (f.cyclops) L(bw / 3, bh + 2, bw / 3 + 3, bh + 2);
+}
+
 function renderMock(sim: Sim, tMs: number, fb: Uint8Array) {
   const f = cycledFace(sim, tMs);
   const c = new Canvas1(fb);
   const t = (tMs * f.speed) / 5;
   const salt = sim.seed * 7919 + f.seed;
 
-  // Glance: hold a random target per segment, ease into it.
+  // Drift: hold a random target per segment, ease into it.
   let gx = 0;
   let gy = 0;
   if (f.lookAround) {
@@ -341,146 +343,116 @@ function renderMock(sim: Sim, tMs: number, fb: Uint8Array) {
     const k = Math.floor(t / seg);
     const tx = (k: number) => (rand(k * 2 + salt) * 2 - 1) * f.lookX;
     const ty = (k: number) => (rand(k * 2 + 1 + salt) * 2 - 1) * f.lookY;
-    const e = Math.min(1, (t - k * seg) / 220);
+    const e = Math.min(1, (t - k * seg) / 800);
     const s = e * e * (3 - 2 * e);
     gx = tx(k - 1) + (tx(k) - tx(k - 1)) * s;
     gy = ty(k - 1) + (ty(k) - ty(k - 1)) * s;
   }
 
-  // Blink: one 160 ms close/open per period.
-  let lid = 0;
-  if (f.blink && f.mood !== "dizzy") {
-    const period = Math.max(400, ((f.blinkMin + f.blinkMax) / 2) * 100);
-    const k = Math.floor(t / period);
-    const at = (t - k * period) - rand(k + salt) * (period - 200);
-    if (at >= 0 && at < 160) lid = 1 - Math.abs(at - 80) / 80;
-  }
-
-  const breathe = f.breathe ? Math.round(Math.sin(t / 900) * 1.5) : 0;
-  let w = f.eyeW;
-  let h = f.eyeH + breathe;
-  let r = f.eyeR;
-  let bob = 0;
-  let jitter = 0;
-  switch (f.mood) {
-    case "surprised":
-      h = Math.round(h * 1.12);
-      r = Math.max(r, Math.floor(w / 2) - 2);
-      break;
-    case "scared":
-      w = Math.round(w * 0.7);
-      h = Math.round(h * 0.8);
-      jitter = Math.round(Math.sin(t / 40) * 1);
-      break;
-    case "excited":
-      bob = Math.round(Math.abs(Math.sin(t / 180)) * -4);
-      break;
-    case "dizzy":
-      gx = gy = 0;
-      break;
-  }
-  const n = f.cyclops ? 1 : 2;
-  const total = n * w + (n - 1) * f.eyeGap;
-  const x0 = Math.round((W - total) / 2 + gx) + jitter;
-  const y0 = Math.round((H - h) / 2 + f.eyeY + gy + bob - (f.mouth ? 5 : 0));
-  const visH = Math.max(2, Math.round(h * (1 - lid)));
-
-  for (let i = 0; i < n; i++) {
-    const ex = x0 + i * (w + f.eyeGap);
-    const ey = y0 + Math.round((h - visH) / 2);
-    const left = i === 0 && n === 2;
-    const cx = ex + w / 2;
-    const cy = y0 + h / 2;
-
-    if (f.mood === "love") {
-      const s = Math.max(1, Math.floor(Math.min(w / 7, h / 6)));
-      HEART.forEach((row, j) => [...row].forEach((ch, k) => {
-        if (ch === "#") for (let a = 0; a < s; a++) for (let b = 0; b < s; b++) c.set(cx - 3.5 * s + k * s + a, cy - 3 * s + j * s + b);
-      }));
-      continue;
-    }
-    if (f.mood === "dizzy") {
-      const spin = t / 300;
-      for (let rr = 3; rr < Math.min(w, h) / 2; rr += 4) c.ring(cx + Math.cos(spin + rr) * 1.5, cy + Math.sin(spin + rr) * 1.5, rr);
-      continue;
-    }
-
-    c.roundRect(ex, ey, w, visH, r);
-    const top = ey;
-    const bottom = ey + visH;
-    switch (f.mood) {
-      case "happy":
-      case "excited":
-        c.carve(ex, ey, w, visH, (px, py) => {
-          const dx = (px - cx) / (w * 0.75);
-          const dy = (py - (bottom + h * 0.15)) / (h * 0.55);
-          return dx * dx + dy * dy < 1;
-        });
-        break;
-      case "angry":
-        c.carve(ex, ey, w, visH, (px, py) => {
-          const u = (px - ex) / w;
-          const slope = left ? u : 1 - u;
-          return py < top + slope * h * 0.45;
-        });
-        break;
-      case "sad":
-        c.carve(ex, ey, w, visH, (px, py) => {
-          const u = (px - ex) / w;
-          const slope = left ? 1 - u : u;
-          return py < top + slope * h * 0.4;
-        });
-        break;
-      case "sleepy":
-        c.carve(ex, ey, w, visH, (_px, py) => py < top + h * 0.55 + Math.sin(t / 1400) * 2);
-        break;
-      case "bored":
-        c.carve(ex, ey, w, visH, (_px, py) => py < top + h * 0.45);
-        break;
-      case "suspicious":
-        if (left) c.carve(ex, ey, w, visH, (_px, py) => py < top + h * 0.35 || py > bottom - h * 0.2);
-        else c.carve(ex, ey, w, visH, (_px, py) => py < top + h * 0.15);
-        break;
-    }
-  }
-
-  if (f.mouth) {
-    const my = y0 + h + 5;
-    const happyish = f.mood === "happy" || f.mood === "excited" || f.mood === "love";
-    const sadish = f.mood === "sad" || f.mood === "scared" || f.mood === "angry";
-    for (let i = -6; i <= 6; i++) {
-      const curve = Math.round((i * i) / 12);
-      c.set(W / 2 + i + gx * 0.5, my + (happyish ? -curve + 3 : sadish ? curve : 1));
-    }
-  }
-
-  const fl = Math.floor(t / 400);
+  // Sky (rough).
+  const sc = t / 100;
   switch (f.overlay) {
-    case "hearts":
-      c.sprite(6, 6 + (fl % 3), SMALL_HEART);
-      c.sprite(114, 10 + ((fl + 1) % 3), SMALL_HEART);
+    case "stars":
+      for (let i = 0; i < 18; i++) c.set(rand(i + salt) * W, rand(i + 99 + salt) * 44);
       break;
-    case "zzz":
-      c.sprite(100, 14 - (fl % 4), Z);
-      c.sprite(108, 8 - ((fl + 2) % 4), Z);
-      c.sprite(116, 2 + (fl % 2), Z);
+    case "clouds":
+      for (let i = 0; i < 3; i++) c.ring(((150 - sc - i * 67) % 190 + 190) % 190 - 30, 6 + i * 6, 4);
       break;
-    case "sweat":
-      c.sprite(110, 8 + (fl % 6), DROP);
+    case "rain":
+      for (let i = 0; i < 16; i++) {
+        const y = ((t / 6) * (1 + (i & 1) / 2) + rand(i) * 72) % 72 - 4;
+        c.line(rand(i + 7) * W, y, rand(i + 7) * W - 1, y + 3);
+      }
       break;
-    case "anger":
-      if (fl % 2 === 0) c.sprite(112, 4, ANGER);
+    case "city":
+    case "hills":
+      for (let x = 0; x < W; x++) {
+        const b = Math.floor((x + sc) / 12);
+        if (f.overlay === "city") c.set(x, 55 - Math.floor(rand(b + salt) * 14));
+        else c.set(x, 55 + Math.sin((x + sc) / 20) * 4);
+      }
       break;
-    case "tears":
-      c.sprite(x0 + 4, y0 + h + 2 + (fl % 5), DROP);
+    case "wind":
+      for (let i = 0; i < 6; i++) {
+        const x = 140 - ((t / 5 + rand(i) * 180) % 180);
+        c.line(x, 4 + i * 10, x + 8, 4 + i * 10);
+      }
       break;
-    case "sparkles":
-      c.sprite(4 + (fl % 2) * 2, 6, SPARK);
-      c.sprite(118, 44 + (fl % 2), SPARK);
+    case "grid":
+      c.line(0, 44, W - 1, 44);
+      for (let i = -4; i <= 4; i++) c.line(64 + i * 6, 45, 64 + i * 34, 63);
       break;
-    case "question":
-      c.sprite(116, 4, QUESTION);
+  }
+
+  const s = f.eyeW;
+  const bob = f.breathe ? Math.sin(t / 520) * 3 : 0;
+  const x = W / 2 + gx;
+  const y = H / 2 + f.eyeY + gy + bob;
+  const ground = 61 - Math.max(1, Math.floor(s / 14)) - Math.max(2, Math.floor(s / 9));
+  const wave = (period: number) => Math.sin((t / period) * Math.PI * 2);
+  switch (f.mood) {
+    case "patrol":
+      drone(c, f, t, x + wave(3300) * ((W - s) / 2 - 2), y, s, 0.3 * Math.cos((t / 3300) * Math.PI * 2), Math.cos((t / 3300) * Math.PI * 2) < 0 ? -1 : 1);
       break;
+    case "takeoff":
+    case "charge": {
+      const alt = Math.max(0, Math.min(1, wave(6500) * 1.5 + (f.mood === "charge" ? -0.8 : 0.3)));
+      c.line(W / 2 - s / 2 - 4, 62, W / 2 + s / 2 + 4, 62);
+      if (f.mood === "charge") {
+        c.line(3, 2, 21, 2), c.line(3, 10, 21, 10), c.line(3, 2, 3, 10), c.line(21, 2, 21, 10);
+      }
+      drone(c, f, t, W / 2 + (x - W / 2) * alt, ground + (y - ground) * alt, s);
+      break;
+    }
+    case "flip":
+      drone(c, f, t, x, y, s, (t % 6500) > 5000 ? (((t % 6500) - 5000) / 1500) * Math.PI * 2 : 0);
+      break;
+    case "orbit": {
+      const a = (t / 3300) * Math.PI * 2;
+      c.line(63, 28, 63, 63);
+      drone(c, f, t, x + Math.cos(a) * 44, y + Math.sin(a) * 6, Math.max(8, s * (0.7 + Math.sin(a) * 0.3)));
+      break;
+    }
+    case "formation":
+      for (const k of [-1, 0, 1]) drone(c, f, t, x + k * Math.min(f.eyeGap + s * 0.66, 50), y - 6 + Math.abs(k) * 12, s * 0.66);
+      break;
+    case "delivery": {
+      const dx = x + wave(3300) * 14;
+      const px = dx + wave(3300) * 4;
+      c.line(dx, y - 8, px, y + 6);
+      for (let i = -4; i <= 3; i++) c.line(px + i, y + 6, px + i, y + 12);
+      drone(c, f, t, dx, y - 10, s);
+      break;
+    }
+    case "race": {
+      const rx = ((t / 6.4) % 256) - 64;
+      for (let k = 0; k < 3; k++) c.line(rx - s / 2 - 12 - k * 5, y - 4 + k * 4, rx - s / 2 - 4, y - 4 + k * 4);
+      drone(c, f, t, rx, y, s, 0.4);
+      break;
+    }
+    case "scan": {
+      const sx = x + wave(3300) * 34;
+      c.line(x - 1, y - 10, sx - 9, 62);
+      c.line(x + 1, y - 10, sx + 9, 62);
+      drone(c, f, t, x, y - 14, s);
+      break;
+    }
+    case "swarm":
+      for (let k = 0; k < 7; k++)
+        drone(c, f, t, W / 2 + Math.sin(t / (500 + k * 90) + k) * 54, H / 2 + Math.sin(t / (800 + k * 70) + k * 2) * 22, Math.max(8, s / 3));
+      break;
+    case "topdown": {
+      const len = Math.min((s * 3) / 5, 26);
+      for (let k = 0; k < 4; k++) {
+        const a = t / 2000 + Math.PI / 4 + (k * Math.PI) / 2;
+        c.line(x, y, x + Math.cos(a) * len, y + Math.sin(a) * len);
+        c.ring(x + Math.cos(a) * len, y + Math.sin(a) * len, Math.max(2, len / 3));
+      }
+      c.ring(x, y, Math.max(2, len / 4));
+      break;
+    }
+    default:
+      drone(c, f, t, x, y, s);
   }
 
   if (f.drawing) composeDrawing(fb, f.drawing, tMs);
