@@ -16,7 +16,7 @@
 #endif
 #include "deskbunny_engine.h"
 
-#define DB_FW_VERSION "0.1.8"
+#define DB_FW_VERSION "0.1.9"
 
 #if defined(__AVR__)
 #include <avr/pgmspace.h>
