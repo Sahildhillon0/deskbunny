@@ -1,5 +1,5 @@
 /*
- * DeskBunny face engine: public API.
+ * DeskBunny engine (drone animations): public API.
  * Shared verbatim by the Arduino firmware and the desktop simulator (via FFI).
  * C99, no malloc, no stdio. Contract: docs/ARCHITECTURE.md.
  */
@@ -30,41 +30,44 @@ extern "C" {
 #define DB_ART_REPLACE 1
 #define DB_ART_OVER 2
 
+/* Flight animation, stored in the blob's mood byte. */
 enum db_mood {
-  DB_MOOD_NEUTRAL = 0,
-  DB_MOOD_HAPPY,
-  DB_MOOD_ANGRY,
-  DB_MOOD_SAD,
-  DB_MOOD_SLEEPY,
-  DB_MOOD_SURPRISED,
-  DB_MOOD_LOVE,
-  DB_MOOD_SUSPICIOUS,
-  DB_MOOD_EXCITED,
-  DB_MOOD_BORED,
-  DB_MOOD_SCARED,
-  DB_MOOD_DIZZY,
+  DB_MOOD_HOVER = 0,
+  DB_MOOD_PATROL,
+  DB_MOOD_TAKEOFF,
+  DB_MOOD_FLIP,
+  DB_MOOD_ORBIT,
+  DB_MOOD_FORMATION,
+  DB_MOOD_DELIVERY,
+  DB_MOOD_RACE,
+  DB_MOOD_SCAN,
+  DB_MOOD_SWARM,
+  DB_MOOD_TOPDOWN,
+  DB_MOOD_CHARGE,
   DB_MOOD_COUNT
 };
 
+/* Sky background, stored in the blob's overlay byte. */
 enum db_overlay {
   DB_OVERLAY_NONE = 0,
-  DB_OVERLAY_HEARTS,
-  DB_OVERLAY_ZZZ,
-  DB_OVERLAY_SWEAT,
-  DB_OVERLAY_ANGER,
-  DB_OVERLAY_TEARS,
-  DB_OVERLAY_SPARKLES,
-  DB_OVERLAY_QUESTION,
+  DB_OVERLAY_CLOUDS,
+  DB_OVERLAY_STARS,
+  DB_OVERLAY_RAIN,
+  DB_OVERLAY_CITY,
+  DB_OVERLAY_HILLS,
+  DB_OVERLAY_WIND,
+  DB_OVERLAY_GRID,
   DB_OVERLAY_COUNT
 };
 
-#define DB_FLAG_BLINK      0x01
-#define DB_FLAG_LOOK       0x02
-#define DB_FLAG_BREATHE    0x04
-#define DB_FLAG_CYCLOPS    0x08
+/* Flag bits keep their face-era names; drone meaning on the right. */
+#define DB_FLAG_BLINK      0x01 /* strobe: nav lights flash every blink_min */
+#define DB_FLAG_LOOK       0x02 /* drift around within look_x/look_y */
+#define DB_FLAG_BREATHE    0x04 /* hover bob */
+#define DB_FLAG_CYCLOPS    0x08 /* camera gimbal under the body */
 #define DB_FLAG_INVERT     0x10
 #define DB_FLAG_ROTATE180  0x20
-#define DB_FLAG_MOUTH      0x40
+#define DB_FLAG_MOUTH      0x40 /* ground shadow */
 
 enum db_cycle {
   DB_CYCLE_OFF = 0,
@@ -116,7 +119,7 @@ typedef struct db_engine {
 
 uint16_t db_crc16(const uint8_t *data, size_t len);
 
-/* Fill with the built-in default (neutral, blink + look + breathe). */
+/* Fill with the built-in default (hover, strobe + drift + bob). */
 void db_face_default(db_face_t *out);
 
 /* Decode a 64-byte blob. Returns 0 on success; negative on bad magic (-1),

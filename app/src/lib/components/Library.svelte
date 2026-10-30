@@ -7,18 +7,18 @@
   import { updater } from "../updater.svelte";
 
   const MOOD_LABEL: Record<string, string> = {
-    neutral: "Watching",
-    happy: "Happy",
-    angry: "Angry",
-    sad: "Sad",
-    sleepy: "Sleepy",
-    surprised: "Surprised",
-    love: "Love",
-    suspicious: "Suspicious",
-    excited: "Excited",
-    bored: "Bored",
-    scared: "Scared",
-    dizzy: "Dizzy",
+    hover: "Hover",
+    patrol: "Patrol",
+    takeoff: "Take off",
+    flip: "Flip",
+    orbit: "Orbit",
+    formation: "Formation",
+    delivery: "Delivery",
+    race: "Race",
+    scan: "Scan",
+    swarm: "Swarm",
+    topdown: "Top view",
+    charge: "Charge",
   };
 </script>
 
@@ -78,7 +78,7 @@
   </section>
 
   <section aria-labelledby="lib-saved">
-    <h2 id="lib-saved" class="label">My faces</h2>
+    <h2 id="lib-saved" class="label">My drones</h2>
     {#if app.saved.length}
       <ul class="list">
         {#each app.saved as face, i (face.name)}

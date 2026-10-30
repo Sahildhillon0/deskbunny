@@ -220,7 +220,7 @@
             <span class="detail">{w}</span>
           {/each}
           {#if !r.deviceInfo && !r.warnings.length}
-            <span class="detail">The board didn't answer the check. If the face is showing, you're set.</span>
+            <span class="detail">The board didn't answer the check. If the drones are flying, you're set.</span>
           {/if}
         </div>
         <button class="btn ghost small" onclick={() => (phase = { kind: "idle" })}>Dismiss</button>
@@ -242,7 +242,7 @@
         Ready to flash <b>{app.face.name || "UNTITLED"}</b> to {board.name} on <code>{port.path}</code>
       </p>
     {:else}
-      <p class="ready muted">Connect a board to flash this face.</p>
+      <p class="ready muted">Connect a board to flash this scene.</p>
     {/if}
   </div>
 
