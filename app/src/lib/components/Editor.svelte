@@ -7,40 +7,58 @@
   import Switch from "./Switch.svelte";
 
   const MOOD_LABEL: Record<Mood, string> = {
-    hover: "Hover",
-    patrol: "Patrol",
-    takeoff: "Take off",
-    flip: "Flip",
-    orbit: "Orbit",
-    formation: "Formation",
-    delivery: "Delivery",
-    race: "Race",
-    scan: "Scan",
-    swarm: "Swarm",
-    topdown: "Top view",
-    charge: "Charge",
+    neutral: "Watching",
+    happy: "Happy",
+    angry: "Angry",
+    sad: "Sad",
+    sleepy: "Sleepy",
+    surprised: "Surprised",
+    love: "Love",
+    suspicious: "Suspicious",
+    excited: "Excited",
+    bored: "Bored",
+    scared: "Scared",
+    dizzy: "Dizzy",
+    wink: "Wink",
+    laugh: "Laugh",
+    crying: "Crying",
+    skeptical: "Skeptical",
+    smug: "Smug",
+    evil: "Evil",
+    worried: "Worried",
+    shy: "Shy",
+    squint: "Squint",
+    dead: "KO",
+    asleep: "Asleep",
+    starry: "Starry",
+    hypno: "Hypno",
+    glitch: "Glitch",
+    scan: "Scanning",
+    eyeroll: "Eye roll",
+    confused: "Confused",
+    determined: "Determined",
   };
 
   const OVERLAY_LABEL: Record<Overlay, string> = {
     none: "None",
-    clouds: "Clouds",
-    stars: "Stars",
-    rain: "Rain",
-    city: "City",
-    hills: "Hills",
-    wind: "Wind",
-    grid: "Grid",
+    hearts: "Hearts",
+    zzz: "Zzz",
+    sweat: "Sweat",
+    anger: "Anger",
+    tears: "Tears",
+    sparkles: "Sparkle",
+    question: "?",
   };
 
   const CYCLE_LABEL: Record<Cycle, string> = {
-    off: "One scene",
+    off: "One mood",
     sequence: "Loop my list",
     random: "Random",
   };
 
   const DRAW_MODE_LABEL: Record<DrawMode, string> = {
     replace: "Drawing only",
-    over: "Over the drones",
+    over: "Over the face",
   };
 
   function setDrawMode(m: DrawMode) {
@@ -78,7 +96,7 @@
     if (f.lookMax < f.lookMin) f.lookMax = f.lookMin;
   });
 
-  /** Adds a scene to the end of the cycle list, or takes it out. List order is play order. */
+  /** Adds a mood to the end of the cycle list, or takes it out. List order is play order. */
   function toggleCycleMood(m: Mood) {
     const list = app.face.cycleMoods;
     const i = list.indexOf(m);
@@ -93,12 +111,12 @@
   }
 
   async function save() {
-    if (!f.name.trim()) return say("error", "Give the scene a name first.");
+    if (!f.name.trim()) return say("error", "Give the face a name first.");
     busy = true;
     try {
       const updating = !!app.savedMatch;
       await app.save();
-      say("ok", updating ? `Updated ${f.name}` : `Saved ${f.name} to My drones`);
+      say("ok", updating ? `Updated ${f.name}` : `Saved ${f.name} to My faces`);
     } catch (e) {
       say("error", api.errorText(e));
     } finally {
@@ -178,20 +196,20 @@
       </div>
       <p class="hint">
         {f.drawing.frames.length === 1 ? "1 frame" : `${f.drawing.frames.length} frames`}.
-        {f.drawing.mode === "replace" ? "The drone settings below don't show while the drawing replaces the scene; contrast, invert and rotate still apply." : "Drawn on top of the flying drones."}
+        {f.drawing.mode === "replace" ? "The face settings below are hidden while the drawing replaces the face; contrast, invert and rotate still apply." : "Drawn on top of the animated face."}
       </p>
       <div class="row">
         <button class="btn" onclick={() => (app.drawOpen = true)}><Icon name="pencil" /> Edit drawing</button>
         <button class="btn ghost" onclick={removeDrawing}><Icon name="trash" /> Remove</button>
       </div>
     {:else}
-      <p class="hint first">Draw your own picture, text or a short animation. It is shown instead of the drones, or on top of them.</p>
+      <p class="hint first">Draw your own picture, text or a short animation. It is shown instead of the face, or on top of it.</p>
       <button class="btn" onclick={() => (app.drawOpen = true)}><Icon name="pencil" /> Draw on the screen</button>
     {/if}
   </section>
 
   <section>
-    <h2 class="label" id="mood-label">Flight</h2>
+    <h2 class="label" id="mood-label">Mood</h2>
     <div class="chips cols-3" role="radiogroup" aria-labelledby="mood-label">
       {#each MOODS as m (m)}
         <label class="chip" class:on={f.mood === m}>
@@ -203,7 +221,7 @@
   </section>
 
   <section>
-    <h2 class="label" id="cycle-label">Playlist</h2>
+    <h2 class="label" id="cycle-label">Animation</h2>
     <div class="chips cols-3" role="radiogroup" aria-labelledby="cycle-label">
       {#each CYCLES as c (c)}
         <label class="chip" class:on={f.cycle === c}>
@@ -215,14 +233,14 @@
     {#if f.cycle !== "off"}
       <p class="hint" id="cycle-moods-hint">
         {#if f.cycleMoods.length === 0}
-          {f.cycle === "sequence" ? "Plays every scene in order." : "Picks from every scene."} Tap scenes to choose your own.
+          {f.cycle === "sequence" ? "Plays every mood in order." : "Picks from every mood."} Tap moods to choose your own.
         {:else if f.cycle === "sequence"}
           Plays in the order you tapped them, then starts over.
         {:else}
           Picks one of these at random each time.
         {/if}
       </p>
-      <div class="chips cols-3" role="group" aria-label="Scenes to cycle through" aria-describedby="cycle-moods-hint">
+      <div class="chips cols-3" role="group" aria-label="Moods to cycle through" aria-describedby="cycle-moods-hint">
         {#each MOODS as m (m)}
           {@const pos = f.cycleMoods.indexOf(m)}
           <button type="button" class="chip" class:on={pos >= 0} aria-pressed={pos >= 0} onclick={() => toggleCycleMood(m)}>
@@ -233,16 +251,16 @@
       </div>
       <div class="stack cycle-opts">
         <Slider label="Change every" bind:value={app.face.cycleSeconds} min={1} max={255} format={wholeSecs} />
-        <Switch label="Sky follows scene" bind:checked={app.face.cycleOverlay} hint="City for patrol, stars for swarm, and so on" />
+        <Switch label="Overlay follows mood" bind:checked={app.face.cycleOverlay} hint="Hearts for love, Zzz for sleepy, and so on" />
       </div>
     {/if}
   </section>
 
   <section>
-    <h2 class="label" id="overlay-label">Sky</h2>
+    <h2 class="label" id="overlay-label">Overlay</h2>
     <div class="chips cols-4" role="radiogroup" aria-labelledby="overlay-label">
       {#each OVERLAYS as o (o)}
-        <label class="chip" class:on={f.overlay === o}>
+        <label class="chip" class:on={f.overlay === o} title={o === "question" ? "Question mark" : undefined}>
           <input type="radio" name="overlay" value={o} bind:group={app.face.overlay} class="sr-only" />
           {OVERLAY_LABEL[o]}
         </label>
@@ -251,10 +269,12 @@
   </section>
 
   <section>
-    <h2 class="label">Drone</h2>
+    <h2 class="label">Eyes</h2>
     <div class="stack">
-      <Slider label="Size" bind:value={app.face.eyeW} min={16} max={56} format={px} />
-      <Slider label="Formation spacing" bind:value={app.face.eyeGap} min={0} max={40} format={px} />
+      <Slider label="Width" bind:value={app.face.eyeW} min={8} max={56} format={px} />
+      <Slider label="Height" bind:value={app.face.eyeH} min={8} max={56} format={px} />
+      <Slider label="Corner radius" bind:value={app.face.eyeR} min={0} max={radiusMax} format={px} />
+      <Slider label="Gap" bind:value={app.face.eyeGap} min={0} max={40} format={px} />
       <Slider label="Vertical offset" bind:value={app.face.eyeY} min={-20} max={20} format={signedPx} />
     </div>
   </section>
@@ -262,11 +282,11 @@
   <section>
     <h2 class="label">Behaviour</h2>
     <div class="switches">
-      <Switch label="Strobe" bind:checked={app.face.blink} hint="Flash the nav lights" />
-      <Switch label="Drift" bind:checked={app.face.lookAround} hint="Wander around now and then" />
-      <Switch label="Bob" bind:checked={app.face.breathe} hint="Gentle hover bob" />
-      <Switch label="Shadow" bind:checked={app.face.mouth} hint="On the ground below" />
-      <Switch label="Camera" bind:checked={app.face.cyclops} hint="Gimbal under the body" />
+      <Switch label="Blink" bind:checked={app.face.blink} />
+      <Switch label="Watching" bind:checked={app.face.lookAround} hint="Glance around now and then" />
+      <Switch label="Breathe" bind:checked={app.face.breathe} />
+      <Switch label="Mouth" bind:checked={app.face.mouth} />
+      <Switch label="Cyclops" bind:checked={app.face.cyclops} hint="One eye" />
       <Switch label="Invert" bind:checked={app.face.invert} />
       <Switch label="Rotate 180°" bind:checked={app.face.rotate180} hint="For a module mounted upside down" />
     </div>
@@ -276,14 +296,17 @@
     <h2 class="label">Timing</h2>
     <div class="stack">
       <Slider label="Speed" bind:value={app.face.speed} min={1} max={10} format={(v) => `${v} / 10`} />
-      <Slider label="Strobe every" bind:value={app.face.blinkMin} min={5} max={200} format={secs} />
       <div class="pair">
-        <Slider label="Drift every" bind:value={app.face.lookMin} min={5} max={200} format={secs} />
+        <Slider label="Blink every" bind:value={app.face.blinkMin} min={5} max={200} format={secs} />
+        <Slider label="to" bind:value={app.face.blinkMax} min={app.face.blinkMin} max={200} format={secs} />
+      </div>
+      <div class="pair">
+        <Slider label="Glance every" bind:value={app.face.lookMin} min={5} max={200} format={secs} />
         <Slider label="to" bind:value={app.face.lookMax} min={app.face.lookMin} max={200} format={secs} />
       </div>
       <div class="pair">
-        <Slider label="Drift X" bind:value={app.face.lookX} min={0} max={40} format={px} />
-        <Slider label="Drift Y" bind:value={app.face.lookY} min={0} max={20} format={px} />
+        <Slider label="Glance X" bind:value={app.face.lookX} min={0} max={40} format={px} />
+        <Slider label="Glance Y" bind:value={app.face.lookY} min={0} max={20} format={px} />
       </div>
     </div>
   </section>
@@ -309,10 +332,10 @@
       </button>
     {/if}
     <span class="spacer"></span>
-    <button class="btn ghost icon" onclick={importFace} title="Import drone JSON" aria-label="Import drone JSON">
+    <button class="btn ghost icon" onclick={importFace} title="Import face JSON" aria-label="Import face JSON">
       <Icon name="upload" />
     </button>
-    <button class="btn ghost icon" onclick={exportFace} title="Export drone JSON" aria-label="Export drone JSON">
+    <button class="btn ghost icon" onclick={exportFace} title="Export face JSON" aria-label="Export face JSON">
       <Icon name="download" />
     </button>
   </div>

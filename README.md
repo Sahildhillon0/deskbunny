@@ -6,7 +6,7 @@ sleepy, in love and more. This desktop app lets you pick or design a face,
 preview it in a pixel-exact simulator, and flash it to the board. You don't
 need the Arduino IDE.
 
-- **12 moods** with blinking, glancing, breathing and overlays (hearts, zzz,
+- **30 eye animations (moods)** with blinking, glancing, breathing and overlays (hearts, zzz,
   tears, sparkles…), all editable.
 - **Pixel-exact simulator.** The same C face engine runs on the board and in
   the app.

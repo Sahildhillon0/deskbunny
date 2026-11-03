@@ -20,13 +20,13 @@
 </script>
 
 <div class="shell">
-  <aside class="library" aria-label="Drone library">
+  <aside class="library" aria-label="Face library">
     <Library />
   </aside>
 
   <main class="stage">
     {#if app.loadError}
-      <p class="load-error" role="alert">Couldn't load drones: {app.loadError}</p>
+      <p class="load-error" role="alert">Couldn't load faces: {app.loadError}</p>
     {/if}
     <Simulator />
     {#if !isTauri}
@@ -34,7 +34,7 @@
     {/if}
   </main>
 
-  <aside class="editor" aria-label="Drone editor">
+  <aside class="editor" aria-label="Face editor">
     <Editor />
   </aside>
 

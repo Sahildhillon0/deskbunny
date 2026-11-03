@@ -1,24 +1,49 @@
 // IPC contract types. Source of truth: docs/ARCHITECTURE.md ("Tauri IPC").
 
-/** Flight animations (the blob's mood byte). */
 export const MOODS = [
-  "hover",
-  "patrol",
-  "takeoff",
-  "flip",
-  "orbit",
-  "formation",
-  "delivery",
-  "race",
+  "neutral",
+  "happy",
+  "angry",
+  "sad",
+  "sleepy",
+  "surprised",
+  "love",
+  "suspicious",
+  "excited",
+  "bored",
+  "scared",
+  "dizzy",
+  "wink",
+  "laugh",
+  "crying",
+  "skeptical",
+  "smug",
+  "evil",
+  "worried",
+  "shy",
+  "squint",
+  "dead",
+  "asleep",
+  "starry",
+  "hypno",
+  "glitch",
   "scan",
-  "swarm",
-  "topdown",
-  "charge",
+  "eyeroll",
+  "confused",
+  "determined",
 ] as const;
 export type Mood = (typeof MOODS)[number];
 
-/** Sky backgrounds (the blob's overlay byte). */
-export const OVERLAYS = ["none", "clouds", "stars", "rain", "city", "hills", "wind", "grid"] as const;
+export const OVERLAYS = [
+  "none",
+  "hearts",
+  "zzz",
+  "sweat",
+  "anger",
+  "tears",
+  "sparkles",
+  "question",
+] as const;
 export type Overlay = (typeof OVERLAYS)[number];
 
 export const CYCLES = ["off", "sequence", "random"] as const;
@@ -28,7 +53,7 @@ export type Cycle = (typeof CYCLES)[number];
 export const CYCLE_MAX = 12;
 
 export const DRAW_MODES = ["replace", "over"] as const;
-/** replace: only the drawing; over: the drawing on top of the flying drones. */
+/** replace: only the drawing; over: the drawing on top of the animated face. */
 export type DrawMode = (typeof DRAW_MODES)[number];
 
 /** Most frames in a drawing (blob limit). */
@@ -45,9 +70,6 @@ export interface Drawing {
   frames: string[];
 }
 
-/** Face-era key names, drone meanings: blink = strobe, lookAround = drift,
- * breathe = bob, cyclops = camera, mouth = shadow, eyeW = drone size,
- * eyeGap = formation spacing (docs/ARCHITECTURE.md, "Drone fields"). */
 export interface FaceDef {
   name: string;
   mood: Mood;
@@ -142,8 +164,8 @@ export function sanitizeName(raw: string): string {
 
 export function defaultFace(): FaceDef {
   return {
-    name: "DRONE",
-    mood: "hover",
+    name: "BUNNY",
+    mood: "neutral",
     eyeW: 36,
     eyeH: 36,
     eyeR: 8,

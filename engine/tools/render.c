@@ -5,16 +5,14 @@
  *       writes <outdir>/frame_NNNNN.pbm per step and <outdir>/strip.pbm
  *       (all frames stacked vertically, 1 px separator).
  *   render sheet <out.pbm> [t_ms...]
- *       contact sheet: one row per drone scene (with shadow and a fitting sky),
+ *       contact sheet: one row per mood (with mouth and a fitting overlay),
  *       one column per time (default 600 1400 2200 3000 ms).
  *   render blob <face> <out.bin>     encode a face to a 64-byte blob
  *   render blobhdr                   print firmware/deskbunny/db_default_blob.h
  *
  * <face> is a path to a 64-byte blob (*.bin) or a spec:
  *   mood[:overlay][+mouth][+cyclops][+invert][+rotate][+noblink][+nolook]
- *   e.g. "hover", "patrol:city+mouth", "scan:grid+cyclops".
- *   (Drone meanings: mood = scene, overlay = sky, mouth = shadow,
- *   cyclops = camera, blink = strobe, look = drift.)
+ *   e.g. "happy", "love:hearts+mouth", "sleepy:zzz".
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -23,11 +21,14 @@
 #include "../deskbunny_engine.h"
 
 static const char *const k_moods[DB_MOOD_COUNT] = {
-  "hover", "patrol", "takeoff", "flip", "orbit", "formation",
-  "delivery", "race", "scan", "swarm", "topdown", "charge"
+  "neutral", "happy", "angry", "sad", "sleepy", "surprised",
+  "love", "suspicious", "excited", "bored", "scared", "dizzy",
+  "wink", "laugh", "crying", "skeptical", "smug", "evil",
+  "worried", "shy", "squint", "dead", "asleep", "starry",
+  "hypno", "glitch", "scan", "eyeroll", "confused", "determined"
 };
 static const char *const k_overlays[DB_OVERLAY_COUNT] = {
-  "none", "clouds", "stars", "rain", "city", "hills", "wind", "grid"
+  "none", "hearts", "zzz", "sweat", "anger", "tears", "sparkles", "question"
 };
 
 static int lookup(const char *s, size_t n, const char *const *tab, int count)
@@ -178,9 +179,14 @@ static int cmd_frames(int argc, char **argv)
 static int cmd_sheet(int argc, char **argv)
 {
   static const uint8_t ov[DB_MOOD_COUNT] = {
-    DB_OVERLAY_NONE, DB_OVERLAY_CITY, DB_OVERLAY_HILLS, DB_OVERLAY_NONE,
-    DB_OVERLAY_CLOUDS, DB_OVERLAY_NONE, DB_OVERLAY_CITY, DB_OVERLAY_WIND,
-    DB_OVERLAY_GRID, DB_OVERLAY_STARS, DB_OVERLAY_RAIN, DB_OVERLAY_CLOUDS
+    DB_OVERLAY_NONE, DB_OVERLAY_SPARKLES, DB_OVERLAY_ANGER, DB_OVERLAY_TEARS,
+    DB_OVERLAY_ZZZ, DB_OVERLAY_NONE, DB_OVERLAY_HEARTS, DB_OVERLAY_QUESTION,
+    DB_OVERLAY_SPARKLES, DB_OVERLAY_NONE, DB_OVERLAY_SWEAT, DB_OVERLAY_NONE,
+    DB_OVERLAY_NONE, DB_OVERLAY_SPARKLES, DB_OVERLAY_TEARS, DB_OVERLAY_QUESTION,
+    DB_OVERLAY_NONE, DB_OVERLAY_ANGER, DB_OVERLAY_SWEAT, DB_OVERLAY_HEARTS,
+    DB_OVERLAY_NONE, DB_OVERLAY_NONE, DB_OVERLAY_ZZZ, DB_OVERLAY_SPARKLES,
+    DB_OVERLAY_NONE, DB_OVERLAY_NONE, DB_OVERLAY_NONE, DB_OVERLAY_NONE,
+    DB_OVERLAY_QUESTION, DB_OVERLAY_NONE
   };
   long times[16] = { 600, 1400, 2200, 3000 };
   int nt = 4, m, k;
@@ -196,7 +202,7 @@ static int cmd_sheet(int argc, char **argv)
     db_face_default(&face);
     face.mood = (uint8_t)m;
     face.overlay = ov[m];
-    face.flags = DB_FLAG_BLINK | DB_FLAG_BREATHE | DB_FLAG_MOUTH | DB_FLAG_LOOK;
+    face.flags = DB_FLAG_BREATHE | DB_FLAG_MOUTH | DB_FLAG_LOOK;
     for (k = 0; k < nt; k++) {
       db_engine_t eng;
       uint8_t fb[DB_FB_SIZE];

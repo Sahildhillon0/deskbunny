@@ -10,38 +10,73 @@ use crate::ffi::{self, db_face_t};
 pub const BLOB_SIZE: usize = ffi::DB_BLOB_SIZE;
 pub const NAME_MAX: usize = 12;
 
-/// Flight animation (blob byte 9, still called `mood` in the blob and JSON).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Mood {
-    Hover,
-    Patrol,
-    Takeoff,
-    Flip,
-    Orbit,
-    Formation,
-    Delivery,
-    Race,
+    Neutral,
+    Happy,
+    Angry,
+    Sad,
+    Sleepy,
+    Surprised,
+    Love,
+    Suspicious,
+    Excited,
+    Bored,
+    Scared,
+    Dizzy,
+    Wink,
+    Laugh,
+    Crying,
+    Skeptical,
+    Smug,
+    Evil,
+    Worried,
+    Shy,
+    Squint,
+    Dead,
+    Asleep,
+    Starry,
+    Hypno,
+    Glitch,
     Scan,
-    Swarm,
-    Topdown,
-    Charge,
+    Eyeroll,
+    Confused,
+    Determined,
 }
 
 impl Mood {
-    pub const ALL: [Mood; 12] = [
-        Mood::Hover,
-        Mood::Patrol,
-        Mood::Takeoff,
-        Mood::Flip,
-        Mood::Orbit,
-        Mood::Formation,
-        Mood::Delivery,
-        Mood::Race,
+    pub const ALL: [Mood; 30] = [
+        Mood::Neutral,
+        Mood::Happy,
+        Mood::Angry,
+        Mood::Sad,
+        Mood::Sleepy,
+        Mood::Surprised,
+        Mood::Love,
+        Mood::Suspicious,
+        Mood::Excited,
+        Mood::Bored,
+        Mood::Scared,
+        Mood::Dizzy,
+        Mood::Wink,
+        Mood::Laugh,
+        Mood::Crying,
+        Mood::Skeptical,
+        Mood::Smug,
+        Mood::Evil,
+        Mood::Worried,
+        Mood::Shy,
+        Mood::Squint,
+        Mood::Dead,
+        Mood::Asleep,
+        Mood::Starry,
+        Mood::Hypno,
+        Mood::Glitch,
         Mood::Scan,
-        Mood::Swarm,
-        Mood::Topdown,
-        Mood::Charge,
+        Mood::Eyeroll,
+        Mood::Confused,
+        Mood::Determined,
     ];
 
     pub fn to_u8(self) -> u8 {
@@ -53,30 +88,29 @@ impl Mood {
     }
 }
 
-/// Sky background (blob byte 36, still called `overlay`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Overlay {
     None,
-    Clouds,
-    Stars,
-    Rain,
-    City,
-    Hills,
-    Wind,
-    Grid,
+    Hearts,
+    Zzz,
+    Sweat,
+    Anger,
+    Tears,
+    Sparkles,
+    Question,
 }
 
 impl Overlay {
     pub const ALL: [Overlay; 8] = [
         Overlay::None,
-        Overlay::Clouds,
-        Overlay::Stars,
-        Overlay::Rain,
-        Overlay::City,
-        Overlay::Hills,
-        Overlay::Wind,
-        Overlay::Grid,
+        Overlay::Hearts,
+        Overlay::Zzz,
+        Overlay::Sweat,
+        Overlay::Anger,
+        Overlay::Tears,
+        Overlay::Sparkles,
+        Overlay::Question,
     ];
 
     pub fn to_u8(self) -> u8 {
@@ -324,7 +358,7 @@ impl FaceDef {
         let has = |bit: u8| r.flags & bit != 0;
         FaceDef {
             name,
-            mood: Mood::from_u8(r.mood).unwrap_or(Mood::Hover),
+            mood: Mood::from_u8(r.mood).unwrap_or(Mood::Neutral),
             eye_w: r.eye_w,
             eye_h: r.eye_h,
             eye_r: r.eye_r,
@@ -351,7 +385,7 @@ impl FaceDef {
             cycle_seconds: r.cycle_secs,
             cycle_moods: r.cycle_moods[..(r.cycle_count as usize).min(CYCLE_MAX)]
                 .iter()
-                .map(|m| Mood::from_u8(*m).unwrap_or(Mood::Hover))
+                .map(|m| Mood::from_u8(*m).unwrap_or(Mood::Neutral))
                 .collect(),
             cycle_overlay: r.cycle_flags & ffi::DB_CYCLE_FLAG_OVERLAY != 0,
             drawing: None,
@@ -478,7 +512,7 @@ mod tests {
         let f = FaceDef {
             cycle: Cycle::Random,
             cycle_seconds: 42,
-            cycle_moods: vec![Mood::Delivery, Mood::Charge, Mood::Delivery],
+            cycle_moods: vec![Mood::Love, Mood::Dizzy, Mood::Love],
             cycle_overlay: false,
             ..FaceDef::default()
         };
@@ -490,9 +524,9 @@ mod tests {
                 42,
                 3,
                 0,
-                Mood::Delivery as u8,
-                Mood::Charge as u8,
-                Mood::Delivery as u8
+                Mood::Love as u8,
+                Mood::Dizzy as u8,
+                Mood::Love as u8
             ]
         );
         assert_eq!(FaceDef::decode(&blob).unwrap(), f);
@@ -501,7 +535,7 @@ mod tests {
         let long = FaceDef {
             cycle: Cycle::Sequence,
             cycle_seconds: 0,
-            cycle_moods: vec![Mood::Flip; 20],
+            cycle_moods: vec![Mood::Sad; 20],
             ..FaceDef::default()
         };
         let back = FaceDef::decode(&long.encode()).unwrap();
@@ -576,7 +610,7 @@ mod tests {
         // `drawing` is omitted when there is none.
         assert_eq!(v.as_object().unwrap().len(), 28);
         assert_eq!(v["cycle"], "off");
-        assert_eq!(v["mood"], "hover");
+        assert_eq!(v["mood"], "neutral");
         assert_eq!(v["overlay"], "none");
     }
 }
