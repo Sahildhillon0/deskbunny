@@ -46,8 +46,15 @@
       "drivers/": "drivers/"
     },
     "linux": {
+      "appimage": {
+        "bundleMediaFramework": true
+      },
       "deb": {
-        "depends": []
+        "depends": [],
+        "recommends": ["gstreamer1.0-plugins-good", "gstreamer1.0-libav"]
+      },
+      "rpm": {
+        "recommends": ["gstreamer1-plugins-good", "gstreamer1-plugin-libav"]
       }
     }
   },

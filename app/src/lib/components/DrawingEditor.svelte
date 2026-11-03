@@ -471,7 +471,10 @@
       importing = { lumas: pic.lumas, name: file.name, frame: cur, note: pic.note };
     } catch {
       importError = isVideo(file)
-        ? `Could not read ${file.name} as a video. Try an MP4 (H.264) or WebM file.`
+        ? `Could not read ${file.name} as a video. Try an MP4 (H.264) or WebM file.` +
+          (/Linux/.test(navigator.userAgent)
+            ? " On Linux, video needs the GStreamer plugins gst-plugins-good and gst-libav (gstreamer1.0-plugins-good and gstreamer1.0-libav on Ubuntu)."
+            : "")
         : `Could not read ${file.name} as an image. Try a PNG, JPEG or GIF.`;
     }
   }

@@ -1,5 +1,5 @@
 name: Tauri Linux build deps
-description: Install the system packages Tauri v2 and serialport need on Ubuntu (see docs/ARCHITECTURE.md, Build conventions).
+description: Install the system packages Tauri v2 and serialport need on Ubuntu, plus the GStreamer plugins the AppImage bundles for video import (MP4/H.264, WebM) (see docs/ARCHITECTURE.md, Build conventions).
 runs:
   using: composite
   steps:
@@ -12,4 +12,8 @@ runs:
           libudev-dev \
           libayatana-appindicator3-dev \
           librsvg2-dev \
-          patchelf
+          patchelf \
+          gstreamer1.0-plugins-base \
+          gstreamer1.0-plugins-good \
+          gstreamer1.0-plugins-bad \
+          gstreamer1.0-libav
