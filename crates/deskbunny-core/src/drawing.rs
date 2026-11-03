@@ -1,4 +1,4 @@
-//! Drawings: 128x64 frames (drawn, imported from a GIF or a video) shown
+//! Drawings: 128x64 frames (drawn, or imported from a GIF) shown
 //! instead of the face or on top of it. JSON form and the compressed drawing
 //! blob. Contract: docs/ARCHITECTURE.md ("Drawing blob v2").
 

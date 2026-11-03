@@ -255,11 +255,7 @@ export interface ImportOptions {
   threshold: number; // 0..255
   dither: boolean;
   invert: boolean;
-  /** Ordered (Bayer) dots instead of error diffusion: steady from frame to frame, so video compresses well. */
-  ordered?: boolean;
 }
-
-const BAYER4 = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5];
 
 /** Grey levels (0..255) of an image fitted inside 128x64, centred on black. */
 export function imageLuma(img: CanvasImageSource & { width: number; height: number }): Float32Array {
@@ -290,12 +286,6 @@ export function lumaToFrame(luma: Float32Array, o: ImportOptions): Frame {
   for (let y = 0; y < H; y++)
     for (let x = 0; x < W; x++) {
       const i = y * W + x;
-      if (o.dither && o.ordered) {
-        // spread the cut over a 4x4 pattern centred on the threshold
-        const t = o.threshold + (BAYER4[(y & 3) * 4 + (x & 3)] - 7.5) * 16;
-        if (g[i] >= t) setPx(out, x, y, true);
-        continue;
-      }
       const on = g[i] >= o.threshold;
       if (on) setPx(out, x, y, true);
       if (!o.dither) continue;

@@ -364,9 +364,7 @@
   let threshold = $state(128);
   let dither = $state(true);
   let invertImg = $state(false);
-  let ordered = $state(false);
   let importError = $state("");
-  let importProgress = $state("");
 
   /** Grey levels of an RGBA bitmap, fitted to 128x64 like a picture. */
   function rgbaLuma(rgba: Uint8ClampedArray<ArrayBuffer>, w: number, h: number): Float32Array {
@@ -377,59 +375,7 @@
     return imageLuma(c);
   }
 
-  const isVideo = (file: File) => file.type.startsWith("video/") || /\.(mp4|m4v|webm|mov|ogv|mkv)$/i.test(file.name);
-
-  /** Video frames per second when importing; the board's flash usually decides how many survive. */
-  let videoFps = $state(10);
-
-  /** Sample a video at `videoFps` (at most DRAW_FRAMES_MAX frames) into grey levels. */
-  async function readVideo(file: File): Promise<{ lumas: Float32Array[]; note: string; frameMs: number; video: true }> {
-    const url = URL.createObjectURL(file);
-    const v = document.createElement("video");
-    v.muted = true;
-    v.preload = "auto";
-    v.playsInline = true;
-    try {
-      await new Promise<void>((ok, fail) => {
-        v.onloadeddata = () => ok();
-        v.onerror = () => fail(new Error("video"));
-        v.src = url;
-      });
-      const dur = Number.isFinite(v.duration) ? v.duration : 0;
-      if (!dur || !v.videoWidth) throw new Error("video");
-      const fps = videoFps;
-      const n = Math.max(1, Math.min(DRAW_FRAMES_MAX, Math.floor(dur * fps)));
-      const c = document.createElement("canvas");
-      c.width = v.videoWidth;
-      c.height = v.videoHeight;
-      const ctx = c.getContext("2d", { willReadFrequently: true })!;
-      const lumas: Float32Array[] = [];
-      for (let i = 0; i < n; i++) {
-        importProgress = `Reading video… frame ${i + 1} of ${n}`;
-        await new Promise<void>((ok) => {
-          v.onseeked = () => ok();
-          v.currentTime = Math.min(dur - 0.001, i / fps);
-        });
-        ctx.drawImage(v, 0, 0);
-        lumas.push(imageLuma(c));
-      }
-      const cut = dur * fps > DRAW_FRAMES_MAX ? ` (first ${(DRAW_FRAMES_MAX / fps).toFixed(0)} s)` : "";
-      return {
-        lumas,
-        note: `Video: ${n} frames at ${fps} fps${cut}. Use "Fit to board" below if it is too big for your board.`,
-        frameMs: Math.max(FRAME_MS_MIN, Math.round(1000 / fps)),
-        video: true,
-      };
-    } finally {
-      importProgress = "";
-      v.removeAttribute("src");
-      v.load();
-      URL.revokeObjectURL(url);
-    }
-  }
-
-  async function readPicture(file: File): Promise<{ lumas: Float32Array[]; note: string; frameMs?: number; video?: true }> {
-    if (isVideo(file)) return readVideo(file);
+  async function readPicture(file: File): Promise<{ lumas: Float32Array[]; note: string; frameMs?: number }> {
     const bytes = new Uint8Array(await file.arrayBuffer());
     if (isGif(bytes)) {
       const gif = decodeGif(bytes);
@@ -466,19 +412,15 @@
       const pic = await readPicture(file);
       remember();
       if (pic.frameMs) frameMs = pic.frameMs;
-      // ordered dots stay put from frame to frame, which keeps video small in flash
-      ordered = !!pic.video;
       importing = { lumas: pic.lumas, name: file.name, frame: cur, note: pic.note };
     } catch {
-      importError = isVideo(file)
-        ? `Could not read ${file.name} as a video. Try an MP4 (H.264) or WebM file.`
-        : `Could not read ${file.name} as an image. Try a PNG, JPEG or GIF.`;
+      importError = `Could not read ${file.name} as an image. Try a PNG, JPEG or GIF.`;
     }
   }
 
   $effect(() => {
     if (!importing) return;
-    const opts = { threshold, dither, invert: invertImg, ordered };
+    const opts = { threshold, dither, invert: invertImg };
     const out = importing.lumas.map((l) => lumaToFrame(l, opts));
     const at = importing.frame;
     untrack(() => {
@@ -824,7 +766,7 @@
               <Switch label="Show previous frame" bind:checked={onion} hint="Onion skin: the previous frame, faintly" />
             </div>
           {:else}
-            <p class="muted">Add frames for an animation, or import a GIF or a video.</p>
+            <p class="muted">Add frames for an animation, or import a GIF.</p>
           {/if}
           <div class="budget" aria-live="polite">
             <p class="muted">Board space: <b>{kb(used)}</b> for {frames.length} {frames.length === 1 ? "frame" : "frames"}</p>
@@ -869,14 +811,13 @@
 
         <section>
           <h2 class="label">Picture</h2>
-          <input bind:this={fileInput} type="file" accept="image/*,video/*" class="sr-only" tabindex="-1" onchange={onFile} />
+          <input bind:this={fileInput} type="file" accept="image/*" class="sr-only" tabindex="-1" onchange={onFile} />
           {#if importing}
             <p class="muted file">{importing.name}</p>
             {#if importing.note}<p class="muted">{importing.note}</p>{/if}
             <div class="opts">
               <Slider label="Brightness cut" bind:value={threshold} min={1} max={254} />
               <Switch label="Dither" bind:checked={dither} hint="Dots for shades of grey" />
-              {#if dither}<Switch label="Steady dots" bind:checked={ordered} hint="A fixed dot pattern: less flicker and much smaller for video" />{/if}
               <Switch label="Invert" bind:checked={invertImg} />
             </div>
             <div class="row">
@@ -884,14 +825,7 @@
               <button class="btn small ghost" onclick={cancelImport}>Remove picture</button>
             </div>
           {:else}
-            {#if importProgress}
-              <p class="muted" aria-live="polite">{importProgress}</p>
-            {:else}
-              <button class="btn small" onclick={() => fileInput.click()}><Icon name="image" /> Import an image, GIF or video…</button>
-              <div class="opts">
-                <Slider label="Video frames per second" bind:value={videoFps} min={2} max={20} step={1} />
-              </div>
-            {/if}
+            <button class="btn small" onclick={() => fileInput.click()}><Icon name="image" /> Import an image or GIF…</button>
             {#if importError}<p class="error" role="alert">{importError}</p>{/if}
           {/if}
         </section>

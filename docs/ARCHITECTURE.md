@@ -115,8 +115,8 @@ speed -> 1..10, name lowercase -> uppercase, other characters -> space).
 
 ## Drawing blob v2 (slot size per firmware image)
 
-A drawing is 1..1000 128x64 frames (drawn in the app, or imported from a GIF or
-a video), shown instead of the face or on top of it. Every image carries
+A drawing is 1..1000 128x64 frames (drawn in the app or imported from a GIF),
+shown instead of the face or on top of it. Every image carries
 `DB_ART_BLOB` next to the face blob; its size is whatever flash the chip has
 left and is stored in the slot's own header (bytes 14..15), so the flasher and
 `fwtool.py` read it from the image (`artCapacity` in manifest.json):

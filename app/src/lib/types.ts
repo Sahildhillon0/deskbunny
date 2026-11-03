@@ -63,7 +63,7 @@ export const ART_HEADER = 16;
 export const FRAME_MS_MIN = 50;
 export const FRAME_MS_MAX = 10000;
 
-/** 128x64 frames (drawn, or from a GIF or video), flashed with the face. */
+/** 128x64 frames (drawn, or from a GIF), flashed with the face. */
 export interface Drawing {
   mode: DrawMode;
   /** Milliseconds per frame. */
