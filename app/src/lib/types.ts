@@ -56,12 +56,14 @@ export const DRAW_MODES = ["replace", "over"] as const;
 /** replace: only the drawing; over: the drawing on top of the animated face. */
 export type DrawMode = (typeof DRAW_MODES)[number];
 
-/** Most frames in a drawing (blob limit). */
-export const DRAW_FRAMES = 4;
+/** Most frames in a drawing. The real limit is the board's drawing slot (Board.artCapacity). */
+export const DRAW_FRAMES_MAX = 1000;
+/** Bytes of drawing blob header, counted against the slot. */
+export const ART_HEADER = 16;
 export const FRAME_MS_MIN = 50;
 export const FRAME_MS_MAX = 10000;
 
-/** Up to four 128x64 frames the user drew, flashed with the face. */
+/** 128x64 frames (drawn, or from a GIF or video), flashed with the face. */
 export interface Drawing {
   mode: DrawMode;
   /** Milliseconds per frame. */
@@ -111,6 +113,8 @@ export interface Board {
   name: string;
   mcu: string;
   protocol: string;
+  /** Bytes the board's drawing slot holds (header included); absent when unknown. */
+  artCapacity?: number;
 }
 
 /** Absent keys are omitted, never null. vid/pid are 4-digit uppercase hex ("2341"). */
@@ -247,7 +251,7 @@ export function normalizeFace(input: unknown): FaceDef {
 function normalizeDrawing(input: unknown): { drawing?: Drawing } {
   if (!input || typeof input !== "object") return {};
   const o = input as Record<string, unknown>;
-  const frames = Array.isArray(o.frames) ? o.frames.filter((f): f is string => typeof f === "string").slice(0, DRAW_FRAMES) : [];
+  const frames = Array.isArray(o.frames) ? o.frames.filter((f): f is string => typeof f === "string").slice(0, DRAW_FRAMES_MAX) : [];
   if (!frames.length) return {};
   return {
     drawing: {

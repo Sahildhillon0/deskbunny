@@ -52,15 +52,15 @@ export async function listPresets(): Promise<FaceDef[]> {
 // ---------------------------------------------------------------- boards / ports
 
 const BOARDS: Board[] = [
-  { id: "uno", name: "Uno R3", mcu: "atmega328p", protocol: "stk500v1" },
-  { id: "nano", name: "Nano (new bootloader)", mcu: "atmega328p", protocol: "stk500v1" },
-  { id: "nano_old", name: "Nano (old bootloader)", mcu: "atmega328p", protocol: "stk500v1" },
-  { id: "pro_mini", name: "Pro Mini 5V", mcu: "atmega328p", protocol: "stk500v1" },
-  { id: "mega", name: "Mega 2560", mcu: "atmega2560", protocol: "stk500v2" },
-  { id: "leonardo", name: "Leonardo", mcu: "atmega32u4", protocol: "avr109" },
-  { id: "micro", name: "Micro", mcu: "atmega32u4", protocol: "avr109" },
-  { id: "uno_r4_minima", name: "Uno R4 Minima", mcu: "RA4M1", protocol: "dfu" },
-  { id: "uno_r4_wifi", name: "Uno R4 WiFi", mcu: "RA4M1", protocol: "samba" },
+  { id: "uno", name: "Uno R3", mcu: "atmega328p", protocol: "stk500v1", artCapacity: 8192 },
+  { id: "nano", name: "Nano (new bootloader)", mcu: "atmega328p", protocol: "stk500v1", artCapacity: 8192 },
+  { id: "nano_old", name: "Nano (old bootloader)", mcu: "atmega328p", protocol: "stk500v1", artCapacity: 8192 },
+  { id: "pro_mini", name: "Pro Mini 5V", mcu: "atmega328p", protocol: "stk500v1", artCapacity: 8192 },
+  { id: "mega", name: "Mega 2560", mcu: "atmega2560", protocol: "stk500v2", artCapacity: 32000 },
+  { id: "leonardo", name: "Leonardo", mcu: "atmega32u4", protocol: "avr109", artCapacity: 4032 },
+  { id: "micro", name: "Micro", mcu: "atmega32u4", protocol: "avr109", artCapacity: 4032 },
+  { id: "uno_r4_minima", name: "Uno R4 Minima", mcu: "RA4M1", protocol: "dfu", artCapacity: 61440 },
+  { id: "uno_r4_wifi", name: "Uno R4 WiFi", mcu: "RA4M1", protocol: "samba", artCapacity: 61440 },
 ];
 
 export async function listBoards(): Promise<Board[]> {

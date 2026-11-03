@@ -407,6 +407,43 @@ static void test_bounds(void)
   free(fb);
 }
 
+/* PackBits drawing frames: runs, literals, XOR/OR/skip, and corrupt streams. */
+static uint8_t g_art[4096];
+static uint8_t art_rd(uint16_t off) { return g_art[off]; }
+
+static void test_art(void)
+{
+  static uint8_t fb[DB_FB_SIZE];
+  uint16_t pos = 0, n = 0, i;
+  int ok = 1;
+  /* frame 1: 1020 x 0x00 (run 129*7 + 117), then literals 1,2,3,4 */
+  for (i = 0; i < 7; i++) { g_art[n++] = 255; g_art[n++] = 0x00; }
+  g_art[n++] = (uint8_t)(117 + 126); g_art[n++] = 0x00;
+  g_art[n++] = 3; g_art[n++] = 1; g_art[n++] = 2; g_art[n++] = 3; g_art[n++] = 4;
+  /* frame 2: 1024 x 0xF0 */
+  for (i = 0; i < 7; i++) { g_art[n++] = 255; g_art[n++] = 0xF0; }
+  g_art[n++] = (uint8_t)(121 + 126); g_art[n++] = 0xF0;
+
+  memset(fb, 0x0F, sizeof(fb));
+  CHECK(db_art_frame(art_rd, n, &pos, DB_ART_XOR, fb) == 0);
+  CHECK(pos == 21);
+  CHECK(fb[0] == 0x0F && fb[1019] == 0x0F && fb[1020] == (0x0F ^ 1) && fb[1023] == (0x0F ^ 4));
+  CHECK(db_art_frame(art_rd, n, &pos, DB_ART_OR, fb) == 0);
+  CHECK(pos == n);
+  for (i = 0; i < DB_FB_SIZE; i++) ok &= (fb[i] & 0xF0) == 0xF0;
+  CHECK(ok);
+  pos = 0;
+  CHECK(db_art_frame(art_rd, n, &pos, DB_ART_SKIP, fb) == 0 && pos == 21);
+  /* truncated: the slot ends inside the frame */
+  pos = 0;
+  CHECK(db_art_frame(art_rd, 20, &pos, DB_ART_XOR, fb) == -1 && pos == 0);
+  /* overrun: a run past 1024 bytes */
+  g_art[0] = 255; g_art[1] = 0;
+  for (i = 2; i < 40; i += 2) { g_art[i] = 255; g_art[i + 1] = 0; }
+  pos = 0;
+  CHECK(db_art_frame(art_rd, 40, &pos, DB_ART_SKIP, fb) == -1);
+}
+
 int main(void)
 {
   test_crc();
@@ -418,6 +455,7 @@ int main(void)
   test_blink();
   test_cycle();
   test_bounds();
+  test_art();
   printf("sizeof(db_engine_t) = %u (host), sizeof(db_face_t) = %u\n",
          (unsigned)sizeof(db_engine_t), (unsigned)sizeof(db_face_t));
   CHECK(sizeof(db_engine_t) <= 96);

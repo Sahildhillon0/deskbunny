@@ -10,7 +10,6 @@ pub const FACE_MAGIC: &[u8; 8] = b"DBFACE01";
 pub const FACE_BLOB_SIZE: usize = 64;
 /// Magic that starts the drawing blob (docs/ARCHITECTURE.md, "Drawing blob v1").
 pub const ART_MAGIC: &[u8; 8] = b"DBART001";
-pub const ART_BLOB_SIZE: usize = 4112;
 
 /// A contiguous run of bytes at an absolute address.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -334,9 +333,40 @@ pub fn patch_face(image: &mut FirmwareImage, blob: &[u8; FACE_BLOB_SIZE]) -> Res
     patch_blob(image, FACE_MAGIC, blob, "face")
 }
 
-/// Locate the drawing blob (exactly one `DBART001`) and overwrite its 4112 bytes.
+/// Size of the image's drawing slot in bytes (header included), read from the
+/// slot's own header (bytes 14..15). Errors when the image has no v2 slot.
+pub fn art_capacity(image: &FirmwareImage) -> Result<usize> {
+    let addr = match image.find_all(ART_MAGIC).as_slice() {
+        [one] => *one,
+        _ => {
+            return Err(FlashError::Image(
+                "firmware image has no single drawing slot (DBART001)".into(),
+            ))
+        }
+    };
+    let h = image
+        .read_at(addr, 16)
+        .ok_or_else(|| FlashError::Image("drawing slot header is truncated".into()))?;
+    let cap = u16::from_le_bytes([h[14], h[15]]) as usize;
+    if h[8] != 2 || cap < 16 {
+        return Err(FlashError::Image(
+            "this firmware's drawing slot is an old format".into(),
+        ));
+    }
+    Ok(cap)
+}
+
+/// Locate the drawing blob (exactly one `DBART001`) and overwrite the start of
+/// the slot with `blob`, which must fit in `art_capacity`.
 /// Returns the flash address of the blob.
-pub fn patch_art(image: &mut FirmwareImage, blob: &[u8; ART_BLOB_SIZE]) -> Result<u32> {
+pub fn patch_art(image: &mut FirmwareImage, blob: &[u8]) -> Result<u32> {
+    let cap = art_capacity(image)?;
+    if blob.len() < 16 || blob.len() > cap {
+        return Err(FlashError::Image(format!(
+            "drawing is {} bytes; this firmware's slot holds {cap}",
+            blob.len()
+        )));
+    }
     patch_blob(image, ART_MAGIC, blob, "drawing")
 }
 
@@ -493,17 +523,26 @@ mod tests {
         let mut data = vec![0xFFu8; 8192];
         data[100..164].copy_from_slice(&blob(0));
         data[200..208].copy_from_slice(ART_MAGIC);
+        data[208] = 2;
+        data[214..216].copy_from_slice(&1000u16.to_le_bytes());
         let mut img = FirmwareImage::from_bin(0x4000, &data);
-        let mut art = [0x5Au8; ART_BLOB_SIZE];
-        art[..8].copy_from_slice(ART_MAGIC);
+        assert_eq!(art_capacity(&img).unwrap(), 1000);
+        let mut art = vec![0x5Au8; 600];
+        art[..16].copy_from_slice(&data[200..216]); // a real blob keeps version + capacity
         assert_eq!(patch_art(&mut img, &art).unwrap(), 0x4000 + 200);
         assert_eq!(patch_face(&mut img, &blob(7)).unwrap(), 0x4000 + 100);
         let flat = img.flatten(0x4000, 0x4000 + 8192, 0);
-        assert_eq!(&flat[200..200 + ART_BLOB_SIZE], &art[..]);
+        assert_eq!(&flat[200..200 + 600], &art[..]);
         assert!(flat[164..200].iter().all(|b| *b == 0xFF));
 
+        // Bigger than the slot: refused.
+        let mut big = vec![0u8; 1001];
+        big[..8].copy_from_slice(ART_MAGIC);
+        let e = patch_art(&mut img, &big).unwrap_err().to_string();
+        assert!(e.contains("holds 1000"), "{e}");
+
         // A slot too close to the end of the image is refused.
-        let mut short = FirmwareImage::from_bin(0, &data[..1000]);
+        let mut short = FirmwareImage::from_bin(0, &data[..500]);
         let e = patch_art(&mut short, &art).unwrap_err().to_string();
         assert!(e.contains("truncated"), "{e}");
     }

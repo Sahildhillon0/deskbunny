@@ -71,15 +71,29 @@ extern volatile const uint8_t DB_FACE_BLOB[DB_BLOB_SIZE];
 __attribute__((used)) volatile const uint8_t DB_FACE_BLOB[DB_BLOB_SIZE] = DB_DEFAULT_BLOB_INIT;
 #endif
 
-// The drawing blob (Drawing blob v1): up to 4 frames shown instead of or over
-// the face. Same rules as the face blob; it ships "off" and the app patches it.
-#define DB_ART_INIT { 'D', 'B', 'A', 'R', 'T', '0', '0', '1', DB_ART_VERSION }
-#if defined(__AVR__)
-extern const uint8_t DB_ART_BLOB[DB_ART_SIZE] PROGMEM;
-__attribute__((used)) const uint8_t DB_ART_BLOB[DB_ART_SIZE] PROGMEM = DB_ART_INIT;
+// The drawing blob (Drawing blob v2): compressed frames shown instead of or
+// over the face. Same rules as the face blob; it ships "off" and the app
+// patches it. The slot takes whatever flash each chip has left; its size is in
+// header bytes 14..15 so the app knows how much fits.
+#if defined(__AVR_ATmega328P__)
+#define DB_ART_SLOT 8192u
+#elif defined(__AVR_ATmega32U4__)
+#define DB_ART_SLOT 4032u
+#elif defined(__AVR__)
+#define DB_ART_SLOT 32000u // Mega: one AVR object stays under 32 KB
 #else
-extern volatile const uint8_t DB_ART_BLOB[DB_ART_SIZE];
-__attribute__((used)) volatile const uint8_t DB_ART_BLOB[DB_ART_SIZE] = DB_ART_INIT;
+#define DB_ART_SLOT 61440u // Uno R4
+#endif
+#define DB_ART_INIT { 'D', 'B', 'A', 'R', 'T', '0', '0', '1', DB_ART_VERSION, 0, 0, 0, 0, 0, \
+                      (uint8_t)(DB_ART_SLOT & 0xFF), (uint8_t)(DB_ART_SLOT >> 8) }
+#if defined(__AVR__)
+extern const uint8_t DB_ART_BLOB[DB_ART_SLOT] PROGMEM;
+__attribute__((used)) const uint8_t DB_ART_BLOB[DB_ART_SLOT] PROGMEM = DB_ART_INIT;
+#else
+// Plain const keeps 60 KB in flash (.rodata); a volatile object would be
+// copied to RAM. Reads still go through a volatile pointer (DB_ROM_BYTE).
+extern const uint8_t DB_ART_BLOB[DB_ART_SLOT];
+__attribute__((used)) const uint8_t DB_ART_BLOB[DB_ART_SLOT] = DB_ART_INIT;
 #endif
 
 static const uint8_t PIN_OLED_CLK = 13;
@@ -94,9 +108,11 @@ static uint8_t fb[DB_FB_SIZE];
 static db_engine_t engine;
 static db_face_t face; // as decoded, including the invert/rotate180 flags
 static uint32_t lastFrame;
-static uint8_t artMode;   // DB_ART_OFF / REPLACE / OVER
-static uint8_t artFrames; // 1..DB_ART_FRAMES when artMode != DB_ART_OFF
+static uint8_t artMode;    // DB_ART_OFF / REPLACE / OVER
+static uint16_t artFrames; // 1..DB_ART_FRAMES_MAX when artMode != DB_ART_OFF
 static uint16_t artMs;
+static uint16_t artIdx = 0xFFFF; // frame now in fb (replace) or at artPos; 0xFFFF = none yet
+static uint16_t artPos, artNext;  // slot offsets of that frame and the next one
 static uint8_t i2cAddr; // 0: the panel is on SPI
 
 // ---------------------------------------------------------------------------
@@ -413,8 +429,8 @@ static void artLoad()
     if ((uint8_t)(DB_ROM_BYTE(&DB_ART_BLOB[i]) ^ 0x5A) != magicX[i]) return;
   if (DB_ROM_BYTE(&DB_ART_BLOB[8]) != DB_ART_VERSION) return;
   uint8_t mode = DB_ROM_BYTE(&DB_ART_BLOB[9]);
-  uint8_t frames = DB_ROM_BYTE(&DB_ART_BLOB[10]);
-  if ((mode != DB_ART_REPLACE && mode != DB_ART_OVER) || frames < 1 || frames > DB_ART_FRAMES) return;
+  uint16_t frames = (uint16_t)(DB_ROM_BYTE(&DB_ART_BLOB[10]) | (DB_ROM_BYTE(&DB_ART_BLOB[11]) << 8));
+  if ((mode != DB_ART_REPLACE && mode != DB_ART_OVER) || frames < 1 || frames > DB_ART_FRAMES_MAX) return;
   uint16_t ms = (uint16_t)(DB_ROM_BYTE(&DB_ART_BLOB[12]) | (DB_ROM_BYTE(&DB_ART_BLOB[13]) << 8));
   if (ms == 0) ms = 500;
   artMs = ms < 50 ? 50 : (ms > 10000 ? 10000 : ms);
@@ -422,16 +438,41 @@ static void artLoad()
   artMode = mode;
 }
 
-// Replace or OR the current drawing frame into fb, reading it straight from flash.
+static uint8_t artRead(uint16_t off) { return DB_ROM_BYTE(&DB_ART_BLOB[off]); }
+
+// Decode the frame at artPos with op; a damaged drawing falls back to the face.
+static bool artDecode(uint8_t op)
+{
+  uint16_t p = artPos;
+  if (db_art_frame(artRead, (uint16_t)DB_ART_SLOT, &p, op, fb) != 0) {
+    artMode = DB_ART_OFF;
+    return false;
+  }
+  artNext = p;
+  return true;
+}
+
+// Frames are PackBits streams read straight from flash, one after another.
+// Replace: frame 0 is drawn onto a clear fb and every later frame is XOR-ed
+// onto the one before, so fb itself is the decoder state (no extra RAM).
+// Over: every frame is whole and is OR-ed onto the face each tick.
 static void artCompose(uint32_t now)
 {
-  uint8_t frame = (uint8_t)((now / artMs) % artFrames);
-  uint16_t base = (uint16_t)(DB_ART_HEADER + (uint16_t)frame * DB_FB_SIZE);
-  if (artMode == DB_ART_REPLACE) {
-    for (uint16_t i = 0; i < DB_FB_SIZE; i++) fb[i] = DB_ROM_BYTE(&DB_ART_BLOB[base + i]);
-  } else {
-    for (uint16_t i = 0; i < DB_FB_SIZE; i++) fb[i] |= DB_ROM_BYTE(&DB_ART_BLOB[base + i]);
+  uint16_t target = (uint16_t)((now / artMs) % artFrames);
+  bool replace = artMode == DB_ART_REPLACE;
+  uint8_t op = replace ? DB_ART_XOR : DB_ART_SKIP;
+  if (target < artIdx) { // first frame, or the loop wrapped
+    artIdx = 0;
+    artPos = DB_ART_HEADER;
+    if (replace) memset(fb, 0, sizeof(fb));
+    if (!artDecode(op)) return;
   }
+  while (artIdx < target) {
+    artPos = artNext;
+    artIdx++;
+    if (!artDecode(op)) return;
+  }
+  if (!replace) artDecode(DB_ART_OR);
 }
 
 // ---------------------------------------------------------------------------

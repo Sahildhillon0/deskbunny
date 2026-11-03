@@ -18,6 +18,9 @@ pub struct ImageEntry {
     pub format: String,
     pub sha256: String,
     pub blob_offset: u32,
+    /// Drawing slot size in bytes; absent in manifests from before drawing blob v2.
+    #[serde(default)]
+    pub art_capacity: Option<u32>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -60,6 +63,26 @@ pub fn load(app: &AppHandle) -> Result<Firmware, String> {
         return Ok(Firmware { dir, manifest });
     }
     Err(NOT_BUNDLED.to_string())
+}
+
+/// Drawing slot size of each board's image (None when unknown or not bundled).
+pub fn art_capacities(app: &AppHandle) -> Vec<(String, Option<u32>)> {
+    let Ok(fw) = load(app) else {
+        return Vec::new();
+    };
+    fw.manifest
+        .boards
+        .iter()
+        .map(|b| {
+            let cap = fw
+                .manifest
+                .images
+                .iter()
+                .find(|i| i.file == b.image)
+                .and_then(|i| i.art_capacity);
+            (b.id.clone(), cap)
+        })
+        .collect()
 }
 
 /// Boards from the manifest when firmware is bundled, else the built-in table.

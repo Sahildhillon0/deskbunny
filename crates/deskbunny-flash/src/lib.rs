@@ -28,7 +28,7 @@ use std::time::Instant;
 use serde::Serialize;
 
 pub use boards::{Board, Protocol};
-pub use image::{patch_art, patch_face, FirmwareImage};
+pub use image::{art_capacity, patch_art, patch_face, FirmwareImage};
 pub use link::{SerialHost, SerialLink, SystemHost};
 pub use ports::{list_ports, PortInfo};
 

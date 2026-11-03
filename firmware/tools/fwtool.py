@@ -16,7 +16,8 @@ import json
 import os
 import sys
 
-BLOBS = {"face": (b"DBFACE01", 64), "art": (b"DBART001", 4112)}
+# art: the size is the slot's own capacity, read from header bytes 14..15.
+BLOBS = {"face": (b"DBFACE01", 64), "art": (b"DBART001", None)}
 
 
 def die(msg):
@@ -71,6 +72,13 @@ def image_bytes(path):
         return 0, fh.read()
 
 
+def art_capacity(path):
+    """Drawing slot size in bytes (header included), from the image itself."""
+    base, data = image_bytes(path)
+    off = locate(path, "art") - base
+    return data[off + 14] | (data[off + 15] << 8)
+
+
 def locate(path, kind="face"):
     MAGIC, BLOB_SIZE = BLOBS[kind]
     base, data = image_bytes(path)
@@ -85,6 +93,10 @@ def locate(path, kind="face"):
     if len(hits) != 1:
         die("%s: magic %r found %d times (need exactly 1)" % (path, MAGIC.decode(), len(hits)))
     off = hits[0]
+    if BLOB_SIZE is None:
+        BLOB_SIZE = data[off + 14] | (data[off + 15] << 8) if off + 16 <= len(data) else 1 << 30
+        if BLOB_SIZE < 16:
+            die("%s: drawing slot at 0x%x has no capacity (old firmware?)" % (path, base + off))
     if off + BLOB_SIZE > len(data):
         die("%s: blob at 0x%x runs past the end of the image" % (path, base + off))
     return base + off
@@ -126,6 +138,7 @@ def cmd_manifest(boards_path, distdir, version):
             "sha256": sha,
             "blobOffset": locate(path),
             "artOffset": locate(path, "art"),
+            "artCapacity": art_capacity(path),
         })
     manifest = {"fwVersion": version, "images": images, "boards": boards}
     with open(os.path.join(distdir, "manifest.json"), "w", newline="\n") as fh:

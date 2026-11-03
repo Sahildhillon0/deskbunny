@@ -113,31 +113,46 @@ mood/overlay/cycle/list entry -> 0, cycle_count -> <= 12, cycle_secs 0 -> 10,
 list entries past cycle_count -> 0, cycle_flags -> bit0 only, eye_w/eye_h -> 8..56, eye_r -> <= eye_w/2, eye_gap -> <= 40,
 speed -> 1..10, name lowercase -> uppercase, other characters -> space).
 
-## Drawing blob v1 (4112 bytes)
+## Drawing blob v2 (slot size per firmware image)
 
-A drawing is up to four 128x64 frames the user drew in the app, shown instead
-of the face or on top of it. Every image carries `DB_ART_BLOB` next to the
-face blob; the flasher finds the magic `DBART001` (exactly one occurrence,
-enforced in CI) and overwrites all 4112 bytes. The image's own copy is "off",
-so a face without a drawing needs no patch.
+A drawing is 1..1000 128x64 frames (drawn in the app, or imported from a GIF or
+a video), shown instead of the face or on top of it. Every image carries
+`DB_ART_BLOB` next to the face blob; its size is whatever flash the chip has
+left and is stored in the slot's own header (bytes 14..15), so the flasher and
+`fwtool.py` read it from the image (`artCapacity` in manifest.json):
+
+| Image | Slot (bytes, header included) |
+|-------|------:|
+| atmega328p (Uno R3, Nano, Pro Mini) | 8192 |
+| atmega32u4 (Leonardo, Micro) | 4032 |
+| atmega2560 (Mega) | 32000 |
+| Uno R4 Minima / WiFi | 61440 |
+
+The flasher finds the magic `DBART001` (exactly one occurrence, enforced in
+CI), checks the blob fits the slot and writes it over the start of the slot. The
+image's own copy is "off", so a face without a drawing needs no patch.
 
 | Off | Size | Field | Notes |
 |----:|----:|-------|-------|
 | 0 | 8 | magic | ASCII `DBART001` |
-| 8 | 1 | version | `1` |
+| 8 | 1 | version | `2` |
 | 9 | 1 | mode | 0 off (face only), 1 replace (drawing only), 2 over (drawing OR-ed on top of the face) |
-| 10 | 1 | frames | 1..4 frames in use; 0 = off |
-| 11 | 1 | reserved | 0 |
+| 10 | 2 | frames | u16, 1..1000 frames; 0 = off |
 | 12 | 2 | frame_ms | u16, ms per frame, 50..10000; 0 decodes as 500 |
-| 14 | 2 | reserved | 0 |
-| 16 | 4096 | frame data | 4 x 1024 bytes, SSD1306 page layout (same as the framebuffer); unused frames 0 |
+| 14 | 2 | capacity | u16, slot size in bytes; set by the firmware build, kept by the app |
+| 16 | n | frame data | one PackBits stream per frame, back to back |
 
-No CRC: a bad magic, version, mode or frame count just turns the drawing off.
-At time `t` (ms since boot) the shown frame is `(t / frame_ms) % frames`. Mode
-replace: the framebuffer is that frame (the engine is not run). Mode over: the
-engine renders the face as usual, then each byte is OR-ed with the frame.
-Contrast, invert and rotate180 still come from the face blob and apply to the
-drawing too (on the panel in firmware; after compositing in the simulator).
+PackBits stream: token `t < 128` is followed by `t + 1` literal bytes; `t >= 128`
+by one byte repeated `t - 126` times (2..129). Each stream decodes to exactly
+1024 bytes in SSD1306 page layout. Replace mode: frame 0 is stored whole and
+every later frame as the XOR with the frame before it (the firmware XORs it
+into the framebuffer, which is its only decoder state: no extra RAM). Over mode:
+every frame is stored whole and OR-ed onto the face. `db_art_frame` in the
+engine is the decoder; `drawing.rs` is the encoder and `flashSize` in
+`drawing.ts` mirrors its length for the app's budget meter.
+
+No CRC: a bad magic, version, mode or frame count, or a stream that runs past
+the slot, turns the drawing off (the face shows instead).
 
 ## Engine API
 

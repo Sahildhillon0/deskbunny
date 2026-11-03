@@ -189,6 +189,33 @@ uint16_t db_crc16(const uint8_t *data, size_t len)
   return crc;
 }
 
+int db_art_frame(db_art_read_t rd, uint16_t end, uint16_t *pos, uint8_t op, uint8_t fb[DB_FB_SIZE])
+{
+  uint16_t p = *pos, i = 0;
+  while (i < DB_FB_SIZE) {
+    uint8_t t, n, v = 0, run;
+    if (p >= end) return -1;
+    t = rd(p++);
+    run = (uint8_t)(t >= 128u);
+    n = (uint8_t)(run ? t - 126u : t + 1u);
+    if (i + n > DB_FB_SIZE) return -1;
+    if (run) {
+      if (p >= end) return -1;
+      v = rd(p++);
+    }
+    for (; n; n--, i++) {
+      if (!run) {
+        if (p >= end) return -1;
+        v = rd(p++);
+      }
+      if (op == DB_ART_XOR) fb[i] ^= v;
+      else if (op == DB_ART_OR) fb[i] |= v;
+    }
+  }
+  *pos = p;
+  return 0;
+}
+
 void db_face_default(db_face_t *out)
 {
   static const char name[] = "DESKBUNNY";

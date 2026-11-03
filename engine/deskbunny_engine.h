@@ -20,15 +20,23 @@ extern "C" {
 #define DB_MAGIC "DBFACE01"
 #define DB_BLOB_VERSION 1
 
-/* Drawing blob v1 (docs/ARCHITECTURE.md): composited by the firmware, not the engine. */
+/* Drawing blob v2 (docs/ARCHITECTURE.md): composited by the firmware, not the
+ * engine. The slot size is per firmware image (header bytes 14..15). */
 #define DB_ART_MAGIC "DBART001"
-#define DB_ART_VERSION 1
+#define DB_ART_VERSION 2
 #define DB_ART_HEADER 16
-#define DB_ART_FRAMES 4
-#define DB_ART_SIZE (DB_ART_HEADER + DB_ART_FRAMES * DB_FB_SIZE)
+#define DB_ART_FRAMES_MAX 1000
 #define DB_ART_OFF 0
 #define DB_ART_REPLACE 1
 #define DB_ART_OVER 2
+
+/* What db_art_frame does with each decoded byte. */
+#define DB_ART_SKIP 0 /* nothing: just step over the frame */
+#define DB_ART_XOR  1 /* fb ^= byte (replace mode: frame 0 onto a clear fb, then deltas) */
+#define DB_ART_OR   2 /* fb |= byte (over mode) */
+
+/* Reads byte `off` of the drawing slot (flash on the board, RAM on the host). */
+typedef uint8_t (*db_art_read_t)(uint16_t off);
 
 enum db_mood {
   DB_MOOD_NEUTRAL = 0,
@@ -133,6 +141,13 @@ typedef struct db_engine {
 } db_engine_t;
 
 uint16_t db_crc16(const uint8_t *data, size_t len);
+
+/* Decode one PackBits frame (exactly DB_FB_SIZE bytes) that starts at slot
+ * offset *pos, never reading at or past `end`. On success *pos moves to the
+ * next frame and 0 is returned; a corrupt stream returns -1 (fb may be
+ * half-written, *pos unchanged). Token t < 128: t + 1 literal bytes follow;
+ * t >= 128: the next byte repeats t - 126 times (2..129). */
+int db_art_frame(db_art_read_t rd, uint16_t end, uint16_t *pos, uint8_t op, uint8_t fb[DB_FB_SIZE]);
 
 /* Fill with the built-in default (neutral, blink + look + breathe). */
 void db_face_default(db_face_t *out);

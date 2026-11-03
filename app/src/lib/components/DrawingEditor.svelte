@@ -25,13 +25,14 @@
     stamp,
     textPoints,
     textWidth,
+    flashSize,
     type Frame,
     type Point,
   } from "../drawing";
   import { decodeGif, isGif, sampleFrames } from "../gif";
   import { OledRenderer } from "../oled";
   import { app } from "../state.svelte";
-  import { DRAW_FRAMES, DRAW_MODES, FRAME_MS_MIN, type DrawMode, type Drawing, type FaceDef } from "../types";
+  import { DRAW_FRAMES_MAX, DRAW_MODES, FRAME_MS_MAX, FRAME_MS_MIN, type Board, type DrawMode, type Drawing, type FaceDef } from "../types";
   import Icon, { type IconName } from "./Icon.svelte";
   import Slider from "./Slider.svelte";
   import Switch from "./Switch.svelte";
@@ -140,7 +141,7 @@
   // ---------------------------------------------------------------- frames
 
   function addFrame(copy: boolean) {
-    if (frames.length >= DRAW_FRAMES) return;
+    if (frames.length >= DRAW_FRAMES_MAX) return;
     remember();
     const next = copy ? frames[cur].slice() : blankFrame();
     frames = [...frames.slice(0, cur + 1), next, ...frames.slice(cur + 1)];
@@ -363,7 +364,9 @@
   let threshold = $state(128);
   let dither = $state(true);
   let invertImg = $state(false);
+  let ordered = $state(false);
   let importError = $state("");
+  let importProgress = $state("");
 
   /** Grey levels of an RGBA bitmap, fitted to 128x64 like a picture. */
   function rgbaLuma(rgba: Uint8ClampedArray<ArrayBuffer>, w: number, h: number): Float32Array {
@@ -374,18 +377,70 @@
     return imageLuma(c);
   }
 
-  async function readPicture(file: File): Promise<{ lumas: Float32Array[]; note: string; frameMs?: number }> {
+  const isVideo = (file: File) => file.type.startsWith("video/") || /\.(mp4|m4v|webm|mov|ogv|mkv)$/i.test(file.name);
+
+  /** Video frames per second when importing; the board's flash usually decides how many survive. */
+  let videoFps = $state(10);
+
+  /** Sample a video at `videoFps` (at most DRAW_FRAMES_MAX frames) into grey levels. */
+  async function readVideo(file: File): Promise<{ lumas: Float32Array[]; note: string; frameMs: number; video: true }> {
+    const url = URL.createObjectURL(file);
+    const v = document.createElement("video");
+    v.muted = true;
+    v.preload = "auto";
+    v.playsInline = true;
+    try {
+      await new Promise<void>((ok, fail) => {
+        v.onloadeddata = () => ok();
+        v.onerror = () => fail(new Error("video"));
+        v.src = url;
+      });
+      const dur = Number.isFinite(v.duration) ? v.duration : 0;
+      if (!dur || !v.videoWidth) throw new Error("video");
+      const fps = videoFps;
+      const n = Math.max(1, Math.min(DRAW_FRAMES_MAX, Math.floor(dur * fps)));
+      const c = document.createElement("canvas");
+      c.width = v.videoWidth;
+      c.height = v.videoHeight;
+      const ctx = c.getContext("2d", { willReadFrequently: true })!;
+      const lumas: Float32Array[] = [];
+      for (let i = 0; i < n; i++) {
+        importProgress = `Reading video… frame ${i + 1} of ${n}`;
+        await new Promise<void>((ok) => {
+          v.onseeked = () => ok();
+          v.currentTime = Math.min(dur - 0.001, i / fps);
+        });
+        ctx.drawImage(v, 0, 0);
+        lumas.push(imageLuma(c));
+      }
+      const cut = dur * fps > DRAW_FRAMES_MAX ? ` (first ${(DRAW_FRAMES_MAX / fps).toFixed(0)} s)` : "";
+      return {
+        lumas,
+        note: `Video: ${n} frames at ${fps} fps${cut}. Use "Fit to board" below if it is too big for your board.`,
+        frameMs: Math.max(FRAME_MS_MIN, Math.round(1000 / fps)),
+        video: true,
+      };
+    } finally {
+      importProgress = "";
+      v.removeAttribute("src");
+      v.load();
+      URL.revokeObjectURL(url);
+    }
+  }
+
+  async function readPicture(file: File): Promise<{ lumas: Float32Array[]; note: string; frameMs?: number; video?: true }> {
+    if (isVideo(file)) return readVideo(file);
     const bytes = new Uint8Array(await file.arrayBuffer());
     if (isGif(bytes)) {
       const gif = decodeGif(bytes);
       if (gif.frames.length > 1) {
-        const keep = sampleFrames(gif.frames.length, DRAW_FRAMES);
+        const keep = sampleFrames(gif.frames.length, DRAW_FRAMES_MAX);
         const total = gif.frames.reduce((t, f) => t + f.delayMs, 0);
         const ms = Math.min(2000, Math.max(FRAME_MS_MIN, Math.round(total / keep.length / 50) * 50));
         const lumas = keep.map((i) => rgbaLuma(gif.frames[i].rgba, gif.width, gif.height));
         const note =
-          gif.frames.length > DRAW_FRAMES
-            ? `GIF with ${gif.frames.length} frames: using ${DRAW_FRAMES}, evenly spread (the board holds ${DRAW_FRAMES}).`
+          gif.frames.length > DRAW_FRAMES_MAX
+            ? `GIF with ${gif.frames.length} frames: using ${DRAW_FRAMES_MAX}, evenly spread.`
             : `GIF with ${gif.frames.length} frames.`;
         return { lumas, note, frameMs: ms };
       }
@@ -411,15 +466,19 @@
       const pic = await readPicture(file);
       remember();
       if (pic.frameMs) frameMs = pic.frameMs;
+      // ordered dots stay put from frame to frame, which keeps video small in flash
+      ordered = !!pic.video;
       importing = { lumas: pic.lumas, name: file.name, frame: cur, note: pic.note };
     } catch {
-      importError = `Could not read ${file.name} as an image. Try a PNG, JPEG or GIF.`;
+      importError = isVideo(file)
+        ? `Could not read ${file.name} as a video. Try an MP4 (H.264) or WebM file.`
+        : `Could not read ${file.name} as an image. Try a PNG, JPEG or GIF.`;
     }
   }
 
   $effect(() => {
     if (!importing) return;
-    const opts = { threshold, dither, invert: invertImg };
+    const opts = { threshold, dither, invert: invertImg, ordered };
     const out = importing.lumas.map((l) => lumaToFrame(l, opts));
     const at = importing.frame;
     untrack(() => {
@@ -442,6 +501,50 @@
   function cancelImport() {
     importing = null;
     undo();
+  }
+
+  // ---------------------------------------------------------------- flash budget
+
+  /** Boards grouped by how much drawing they hold, smallest first. */
+  let budgets = $state<{ cap: number; names: string }[]>([]);
+  const used = $derived.by(() => (void rev, flashSize(mode, frames)));
+  let fitCap = $state(0);
+
+  function loadBudgets(boards: Board[]) {
+    const by = new Map<number, string[]>();
+    for (const b of boards) if (b.artCapacity) by.set(b.artCapacity, [...(by.get(b.artCapacity) ?? []), b.name.replace(/ \(.*\)$/, "")]);
+    budgets = [...by.entries()].sort((a, b) => a[0] - b[0]).map(([cap, n]) => ({ cap, names: [...new Set(n)].join(", ") }));
+    const nano = budgets.find((g) => /Nano/.test(g.names));
+    fitCap = (nano ?? budgets[0])?.cap ?? 0;
+  }
+
+  const kb = (n: number) => (n < 1024 ? `${n} B` : `${(n / 1024).toFixed(1)} KB`);
+
+  /**
+   * Keep as many evenly spread frames as fit in `cap` bytes, stretching each frame
+   * so the animation lasts about as long as before.
+   */
+  function fitTo(cap: number) {
+    if (!cap || flashSize(mode, frames) <= cap) return;
+    const n = frames.length;
+    let lo = 1;
+    let hi = n;
+    while (lo < hi) {
+      const k = Math.ceil((lo + hi) / 2);
+      const pick = sampleFrames(n, k).map((i) => frames[i]);
+      if (flashSize(mode, pick) <= cap) lo = k;
+      else hi = k - 1;
+    }
+    const keep = sampleFrames(n, lo).map((i) => frames[i]);
+    if (flashSize(mode, keep) > cap) {
+      importError = "Even one frame is too big for that board. Try less dithering or a higher brightness cut.";
+      return;
+    }
+    remember();
+    frameMs = Math.min(FRAME_MS_MAX, Math.max(FRAME_MS_MIN, Math.round((frameMs * n) / lo / 10) * 10));
+    frames = keep;
+    cur = Math.min(cur, frames.length - 1);
+    changed();
   }
 
   // ---------------------------------------------------------------- previews (face under, live result)
@@ -550,6 +653,7 @@
   }
 
   onMount(() => {
+    api.listBoards().then(loadBudgets).catch(() => {});
     ctx = canvas.getContext("2d", { alpha: false })!;
     relayout();
     const ro = new ResizeObserver(relayout);
@@ -704,10 +808,10 @@
             {/each}
           </div>
           <div class="row">
-            <button class="btn small" onclick={() => addFrame(false)} disabled={frames.length >= DRAW_FRAMES} title="Add a blank frame">
+            <button class="btn small" onclick={() => addFrame(false)} disabled={frames.length >= DRAW_FRAMES_MAX} title="Add a blank frame">
               <Icon name="plus" /> New
             </button>
-            <button class="btn small" onclick={() => addFrame(true)} disabled={frames.length >= DRAW_FRAMES} title="Copy this frame">
+            <button class="btn small" onclick={() => addFrame(true)} disabled={frames.length >= DRAW_FRAMES_MAX} title="Copy this frame">
               <Icon name="duplicate" /> Copy
             </button>
             <button class="btn small ghost" onclick={deleteFrame} disabled={frames.length <= 1} aria-label="Delete this frame" title="Delete this frame">
@@ -720,8 +824,26 @@
               <Switch label="Show previous frame" bind:checked={onion} hint="Onion skin: the previous frame, faintly" />
             </div>
           {:else}
-            <p class="muted">Add frames for a short animation (up to {DRAW_FRAMES}).</p>
+            <p class="muted">Add frames for an animation, or import a GIF or a video.</p>
           {/if}
+          <div class="budget" aria-live="polite">
+            <p class="muted">Board space: <b>{kb(used)}</b> for {frames.length} {frames.length === 1 ? "frame" : "frames"}</p>
+            {#each budgets as g (g.cap)}
+              <div class="meter" class:over={used > g.cap} title={`${g.names}: ${kb(g.cap)}`}>
+                <span class="bar"><i style={`width:${Math.min(100, (used / g.cap) * 100)}%`}></i></span>
+                <span class="who">{g.names}</span>
+                <span class="fit">{used > g.cap ? "too big" : `${Math.round((used / g.cap) * 100)}%`}</span>
+              </div>
+            {/each}
+            {#if budgets.some((g) => used > g.cap)}
+              <div class="row">
+                <select class="select" bind:value={fitCap} aria-label="Board to fit">
+                  {#each budgets as g (g.cap)}<option value={g.cap}>{g.names}</option>{/each}
+                </select>
+                <button class="btn small" onclick={() => fitTo(fitCap)} disabled={used <= fitCap} title="Drop evenly spread frames until it fits">Fit to board</button>
+              </div>
+            {/if}
+          </div>
           {#if mode === "over"}
             <div class="opts"><Switch label="Show the face" bind:checked={showFace} hint="Draw around the face; it is not part of the drawing" /></div>
           {/if}
@@ -747,13 +869,14 @@
 
         <section>
           <h2 class="label">Picture</h2>
-          <input bind:this={fileInput} type="file" accept="image/*" class="sr-only" tabindex="-1" onchange={onFile} />
+          <input bind:this={fileInput} type="file" accept="image/*,video/*" class="sr-only" tabindex="-1" onchange={onFile} />
           {#if importing}
             <p class="muted file">{importing.name}</p>
             {#if importing.note}<p class="muted">{importing.note}</p>{/if}
             <div class="opts">
               <Slider label="Brightness cut" bind:value={threshold} min={1} max={254} />
               <Switch label="Dither" bind:checked={dither} hint="Dots for shades of grey" />
+              {#if dither}<Switch label="Steady dots" bind:checked={ordered} hint="A fixed dot pattern: less flicker and much smaller for video" />{/if}
               <Switch label="Invert" bind:checked={invertImg} />
             </div>
             <div class="row">
@@ -761,7 +884,14 @@
               <button class="btn small ghost" onclick={cancelImport}>Remove picture</button>
             </div>
           {:else}
-            <button class="btn small" onclick={() => fileInput.click()}><Icon name="image" /> Import an image or GIF…</button>
+            {#if importProgress}
+              <p class="muted" aria-live="polite">{importProgress}</p>
+            {:else}
+              <button class="btn small" onclick={() => fileInput.click()}><Icon name="image" /> Import an image, GIF or video…</button>
+              <div class="opts">
+                <Slider label="Video frames per second" bind:value={videoFps} min={2} max={20} step={1} />
+              </div>
+            {/if}
             {#if importError}<p class="error" role="alert">{importError}</p>{/if}
           {/if}
         </section>
@@ -1016,6 +1146,50 @@
     grid-template-columns: 1fr 1fr;
     gap: 8px;
     margin-bottom: 10px;
+    max-height: 320px;
+    overflow-y: auto;
+  }
+
+  .budget {
+    display: grid;
+    gap: 4px;
+    margin-top: 10px;
+  }
+
+  .meter {
+    display: grid;
+    grid-template-columns: 56px 1fr auto;
+    align-items: center;
+    gap: 8px;
+    font-size: 11px;
+    color: var(--text-2);
+  }
+
+  .meter .bar {
+    height: 4px;
+    border-radius: 2px;
+    background: var(--line);
+    overflow: hidden;
+  }
+
+  .meter .bar i {
+    display: block;
+    height: 100%;
+    background: var(--accent);
+  }
+
+  .meter.over .fit {
+    color: var(--danger);
+  }
+
+  .meter.over .bar i {
+    background: var(--danger);
+  }
+
+  .meter .who {
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
   }
 
   .frame {

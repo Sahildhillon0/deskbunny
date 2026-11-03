@@ -71,6 +71,13 @@ extern "C" {
     pub fn db_face_encode(face: *const db_face_t, blob: *mut u8);
     pub fn db_engine_init(e: *mut db_engine_t, face: *const db_face_t, seed: u32);
     pub fn db_engine_render(e: *mut db_engine_t, now_ms: u32, fb: *mut u8);
+    pub fn db_art_frame(
+        rd: extern "C" fn(u16) -> u8,
+        end: u16,
+        pos: *mut u16,
+        op: u8,
+        fb: *mut u8,
+    ) -> c_int;
 
     // build.rs layout shim
     pub fn db_sizeof_face() -> usize;

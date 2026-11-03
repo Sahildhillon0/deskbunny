@@ -16,7 +16,9 @@ use deskbunny_core::{presets, Engine, FaceDef};
 use deskbunny_flash::boards::{Board, UsbRole};
 use deskbunny_flash::link::query_device_info;
 use deskbunny_flash::ports::guess_board;
-use deskbunny_flash::{patch_art, patch_face, uploader_for, Report, SerialHost, SystemHost};
+use deskbunny_flash::{
+    art_capacity, patch_art, patch_face, uploader_for, Report, SerialHost, SystemHost,
+};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 
@@ -42,6 +44,9 @@ struct BoardDto {
     name: String,
     mcu: String,
     protocol: deskbunny_flash::Protocol,
+    /// Bytes the board's drawing slot holds; absent when unknown.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    art_capacity: Option<u32>,
 }
 
 #[derive(Serialize)]
@@ -83,9 +88,14 @@ fn list_presets() -> Vec<FaceDef> {
 
 #[tauri::command]
 fn list_boards(app: AppHandle) -> Vec<BoardDto> {
+    let caps = firmware::art_capacities(&app);
     firmware::boards(&app)
         .into_iter()
         .map(|b| BoardDto {
+            art_capacity: caps
+                .iter()
+                .find(|(id, _)| *id == b.id)
+                .and_then(|(_, c)| *c),
             id: b.id,
             name: b.name,
             mcu: b.mcu,
@@ -227,9 +237,11 @@ async fn flash(
     let blob_address = patch_face(&mut image, &face.encode()).map_err(|e| e.to_string())?;
     // The image ships with the drawing off; only a face with a drawing needs the slot.
     if let Some(drawing) = &face.drawing {
-        patch_art(&mut image, &drawing.encode()).map_err(|e| {
-            format!("{e}. This firmware predates drawings; update DeskBunny to flash one.")
+        let cap = art_capacity(&image).map_err(|e| {
+            format!("{e}. This firmware predates long animations; update DeskBunny to flash one.")
         })?;
+        let blob = drawing.encode(cap)?;
+        patch_art(&mut image, &blob).map_err(|e| e.to_string())?;
     }
     let mut warnings = Vec::new();
     // manifest blobOffset: HEX address for .hex, file offset for .bin.
