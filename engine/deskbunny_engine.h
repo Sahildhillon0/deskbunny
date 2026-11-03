@@ -25,7 +25,7 @@ extern "C" {
 #define DB_ART_MAGIC "DBART001"
 #define DB_ART_VERSION 2
 #define DB_ART_HEADER 16
-#define DB_ART_FRAMES_MAX 1000
+#define DB_ART_FRAMES_MAX 10
 #define DB_ART_OFF 0
 #define DB_ART_REPLACE 1
 #define DB_ART_OVER 2

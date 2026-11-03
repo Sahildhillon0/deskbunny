@@ -69,7 +69,7 @@ pub fn delete(app: &AppHandle, name: &str) -> Result<(), String> {
 }
 
 /// Largest face file accepted on import: a face is under 1 KiB of JSON, but a
-/// drawing adds ~1.4 KiB of base64 per frame (up to 1000 frames).
+/// drawing adds ~1.4 KiB of base64 per frame (up to 10 frames).
 const IMPORT_MAX: u64 = 2 * 1024 * 1024;
 
 /// Save dialog, then write the face as pretty JSON. `None` when cancelled.

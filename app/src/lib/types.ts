@@ -57,7 +57,7 @@ export const DRAW_MODES = ["replace", "over"] as const;
 export type DrawMode = (typeof DRAW_MODES)[number];
 
 /** Most frames in a drawing. The real limit is the board's drawing slot (Board.artCapacity). */
-export const DRAW_FRAMES_MAX = 1000;
+export const DRAW_FRAMES_MAX = 10;
 /** Bytes of drawing blob header, counted against the slot. */
 export const ART_HEADER = 16;
 export const FRAME_MS_MIN = 50;

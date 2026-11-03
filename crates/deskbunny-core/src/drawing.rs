@@ -12,7 +12,7 @@ pub const ART_MAGIC: &[u8; 8] = b"DBART001";
 pub const ART_VERSION: u8 = 2;
 pub const ART_HEADER: usize = 16;
 /// Most frames a drawing can have (the real limit is the board's slot size).
-pub const ART_FRAMES_MAX: usize = 1000;
+pub const ART_FRAMES_MAX: usize = 10;
 pub const FRAME_MS_MIN: u16 = 50;
 pub const FRAME_MS_MAX: u16 = 10_000;
 pub const FRAME_MS_DEFAULT: u16 = 500;
@@ -278,9 +278,9 @@ mod tests {
     }
 
     #[test]
-    fn many_simple_frames_fit_and_big_ones_are_refused() {
-        // A dot moving across the screen: hundreds of frames in a Nano's 8 KB.
-        let frames: Vec<Frame> = (0..300)
+    fn simple_frames_fit_and_big_ones_are_refused() {
+        // A dot moving across the screen: the full 10 frames in well under 1 KB.
+        let frames: Vec<Frame> = (0..ART_FRAMES_MAX)
             .map(|i| {
                 let mut f = vec![0u8; FB_SIZE];
                 f[(i * 3) % FB_SIZE] = 0x18;
@@ -292,10 +292,10 @@ mod tests {
             frame_ms: 50,
             frames,
         };
-        assert!(d.encoded_len() < 8192, "{}", d.encoded_len());
-        assert_eq!(play(&d.encode(8192).unwrap()).len(), 300);
+        assert!(d.encoded_len() < 1024, "{}", d.encoded_len());
+        assert_eq!(play(&d.encode(8192).unwrap()).len(), ART_FRAMES_MAX);
         let heavy = Drawing {
-            frames: (0..20).map(noisy).collect(),
+            frames: (0..10).map(noisy).collect(),
             ..d
         };
         let e = heavy.encode(8192).unwrap_err();

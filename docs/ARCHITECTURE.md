@@ -115,7 +115,7 @@ speed -> 1..10, name lowercase -> uppercase, other characters -> space).
 
 ## Drawing blob v2 (slot size per firmware image)
 
-A drawing is 1..1000 128x64 frames (drawn in the app or imported from a GIF),
+A drawing is 1..10 128x64 frames (drawn in the app or imported from a GIF),
 shown instead of the face or on top of it. Every image carries
 `DB_ART_BLOB` next to the face blob; its size is whatever flash the chip has
 left and is stored in the slot's own header (bytes 14..15), so the flasher and
@@ -137,7 +137,7 @@ image's own copy is "off", so a face without a drawing needs no patch.
 | 0 | 8 | magic | ASCII `DBART001` |
 | 8 | 1 | version | `2` |
 | 9 | 1 | mode | 0 off (face only), 1 replace (drawing only), 2 over (drawing OR-ed on top of the face) |
-| 10 | 2 | frames | u16, 1..1000 frames; 0 = off |
+| 10 | 2 | frames | u16, 1..10 frames; 0 = off |
 | 12 | 2 | frame_ms | u16, ms per frame, 50..10000; 0 decodes as 500 |
 | 14 | 2 | capacity | u16, slot size in bytes; set by the firmware build, kept by the app |
 | 16 | n | frame data | one PackBits stream per frame, back to back |
