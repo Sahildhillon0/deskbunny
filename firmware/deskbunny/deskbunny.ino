@@ -512,8 +512,7 @@ static void drawText(const char *s, int16_t y, bool big)
 static void showSplash()
 {
   memset(fb, 0, sizeof(fb));
-  drawText("Best Regards", 17, false);
-  drawText("Zenithratech", 31, true);
+  drawText("Deskbunny", 25, true);
   oledPush(fb);
   delay(1200);
 }
