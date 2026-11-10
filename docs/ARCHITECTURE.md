@@ -435,8 +435,8 @@ SessionStart, UserPromptSubmit, PreToolUse, PostToolUse, Notification, Stop and
 SessionEnd. Each session is idle, starting, working (caption from the tool:
 `EDIT main.rs`, `RUN cargo`, `READ x`, `SEARCH p`), needs you (a permission
 prompt; idle reminders are ignored) or done (`DONE 3m12s`). The busiest
-session wins: needs you > done > working > starting > idle. Silent sessions
-are dropped after 30 min.
+session wins: needs you > done (first 20 s) > working > older done > starting
+> idle, newest on a tie. Silent sessions are dropped after 30 min.
 - Screen choice, highest first: Claude needs you (if the Claude screen is
   enabled) > a notification > a pin > Claude takeover (start 3 s, a new prompt
   5 s, done 20 s, and with `claudeHold` (default on) the whole time any session

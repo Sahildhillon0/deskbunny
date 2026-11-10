@@ -244,7 +244,10 @@ impl Tracker {
     }
 
     pub fn view(&self, now: Instant) -> ClaudeView {
-        let top = self.sessions.values().max_by_key(|s| (s.state, s.since));
+        let top = self
+            .sessions
+            .values()
+            .max_by_key(|s| (rank(s, now), s.since));
         let Some(s) = top else {
             return ClaudeView {
                 state: ClaudeState::Idle,
@@ -289,6 +292,20 @@ impl Tracker {
             active,
             busy,
         }
+    }
+}
+
+/// Which session the screen shows: the highest rank, newest on a tie. "Done"
+/// is news only for [`DONE_HOLD`]; after that a session still working
+/// elsewhere wins over it.
+fn rank(s: &Session, now: Instant) -> u8 {
+    match s.state {
+        ClaudeState::NeedsYou => 5,
+        ClaudeState::Done if now.duration_since(s.since) < DONE_HOLD => 4,
+        ClaudeState::Working => 3,
+        ClaudeState::Done => 2,
+        ClaudeState::Starting => 1,
+        ClaudeState::Idle => 0,
     }
 }
 
@@ -465,6 +482,12 @@ mod tests {
             t.view(t0).state,
             ClaudeState::Done,
             "session a's done outranks b working"
+        );
+        let later = t0 + DONE_HOLD;
+        assert_eq!(
+            t.view(later).state,
+            ClaudeState::Working,
+            "...but only while it is news: then b working wins"
         );
     }
 

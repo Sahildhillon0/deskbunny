@@ -9,6 +9,8 @@
 #   scripts/deskbunny.sh status          is it running? where are the logs?
 #   scripts/deskbunny.sh autostart on    start it hidden in the tray at every login
 #   scripts/deskbunny.sh autostart off
+#   scripts/deskbunny.sh menu on         add this build to the app menu (opens the window)
+#   scripts/deskbunny.sh menu off
 #
 # Builds go to ~/.cache/deskbunny/target (override with CARGO_TARGET_DIR), not
 # the repo. Logs: ~/.cache/deskbunny/deskbunny.log.
@@ -22,6 +24,7 @@ BIN="$CARGO_TARGET_DIR/release/deskbunny-app"
 PIDFILE="$STATE/deskbunny.pid"
 LOG="$STATE/deskbunny.log"
 DESKTOP="${XDG_CONFIG_HOME:-$HOME/.config}/autostart/deskbunny.desktop"
+MENU="${XDG_DATA_HOME:-$HOME/.local/share}/applications/deskbunny.desktop"
 
 mkdir -p "$STATE"
 
@@ -112,6 +115,10 @@ cmd_status() {
   if [ -x "$BIN" ]; then echo "app:       $BIN"; else echo "app:       not built (scripts/deskbunny.sh build)"; fi
   echo "logs:      $LOG"
   if [ -f "$DESKTOP" ]; then echo "autostart: on ($DESKTOP)"; else echo "autostart: off"; fi
+  if [ -f "$MENU" ]; then echo "app menu:  on ($MENU)"; else echo "app menu:  off"; fi
+  if [ -x /usr/bin/deskbunny-app ]; then
+    echo "note:      an installed package also provides /usr/bin/deskbunny-app (sudo apt remove desk-bunny)"
+  fi
 }
 
 cmd_autostart() {
@@ -141,6 +148,35 @@ EOF
   esac
 }
 
+cmd_menu() {
+  case "${1:-}" in
+    on)
+      [ -x "$BIN" ] || cmd_build
+      mkdir -p "$(dirname "$MENU")"
+      # Launching while the tray copy runs just shows its window (single instance).
+      cat > "$MENU" <<EOF
+[Desktop Entry]
+Type=Application
+Name=DeskBunny
+Comment=Animated faces and live screens for the DeskBunny OLED
+Exec="$BIN"
+Icon=$APP/src-tauri/icons/128x128.png
+StartupWMClass=deskbunny-app
+Categories=Development;
+Terminal=false
+EOF
+      command -v update-desktop-database >/dev/null 2>&1 \
+        && update-desktop-database "$(dirname "$MENU")" >/dev/null 2>&1 || true
+      echo "App menu entry added: $MENU"
+      ;;
+    off)
+      rm -f "$MENU"
+      echo "App menu entry removed."
+      ;;
+    *) die "usage: deskbunny.sh menu on|off" ;;
+  esac
+}
+
 case "${1:-}" in
   dev) cmd_dev ;;
   build) cmd_build ;;
@@ -149,8 +185,9 @@ case "${1:-}" in
   restart) cmd_stop; shift; cmd_start "$@" ;;
   status) cmd_status ;;
   autostart) shift; cmd_autostart "$@" ;;
+  menu) shift; cmd_menu "$@" ;;
   *)
-    sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'
     exit 1
     ;;
 esac
