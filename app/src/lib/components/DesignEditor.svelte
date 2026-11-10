@@ -709,6 +709,10 @@
     flex-direction: column;
     align-items: center;
     justify-content: center;
+    /* "safe": when the window is narrower than the screen preview, overflow to
+       the right (scrollable) instead of cutting off its left edge. */
+    align-items: safe center;
+    justify-content: safe center;
     gap: 12px;
     padding: 16px;
     overflow: auto;
@@ -740,8 +744,16 @@
 
   .props {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    /* minmax(0, ...): number inputs would otherwise widen the columns past the
+       panel and the right edge clips. */
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
     gap: 8px;
+  }
+
+  .props :global(.input) {
+    width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
   }
 
   .props label {
@@ -810,7 +822,7 @@
 
   .tokens {
     display: grid;
-    grid-template-columns: auto 1fr;
+    grid-template-columns: auto minmax(0, 1fr);
     gap: 4px 10px;
     margin: 0;
     font-size: 12px;
@@ -822,6 +834,7 @@
 
   .tokens dd {
     margin: 0;
+    overflow-wrap: anywhere;
     color: var(--text-3);
   }
 
