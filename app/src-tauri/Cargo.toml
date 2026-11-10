@@ -18,7 +18,7 @@ deskbunny-flash.workspace = true
 serde.workspace = true
 serde_json = { workspace = true, features = ["preserve_order"] }
 tiny_http = "0.12"
-ureq = { version = "2", features = ["json"] }
+ureq = { version = "3", features = ["json"] }
 tauri = { version = "2", features = ["tray-icon"] }
 chrono = { version = "0.4", default-features = false, features = ["clock", "alloc"] }
 sha2 = "0.11"
