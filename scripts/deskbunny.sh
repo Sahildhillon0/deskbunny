@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # DeskBunny launcher (Linux). One place for the commands nobody remembers.
 #
+#   scripts/deskbunny.sh update          everything after pulling changes: build, app-menu entry,
+#                                        autostart at login, restart in the tray
 #   scripts/deskbunny.sh dev             run the app from source (hot reload)
 #   scripts/deskbunny.sh build           build the release app (once, and after updates)
 #   scripts/deskbunny.sh start           start the built app in the background, window shown
@@ -38,7 +40,10 @@ running_pid() {
   # Only trust the pid file if that process really is DeskBunny.
   if [ -n "$pid" ] && [ "$(cat "/proc/$pid/comm" 2>/dev/null || true)" = "deskbunny-app" ]; then
     echo "$pid"
+    return
   fi
+  # Started some other way (autostart at login, the app menu): find it by name.
+  pgrep -x -u "$(id -u)" deskbunny-app 2>/dev/null | head -n 1 || true
 }
 
 node_deps() {
@@ -50,8 +55,15 @@ node_deps() {
 }
 
 firmware() {
-  # The app bundles the firmware images; build them once if they are missing.
-  if ! ls "$ROOT/firmware/dist/"*.hex >/dev/null 2>&1; then
+  # The app bundles the firmware images: build them when they are missing, or
+  # when the engine or firmware sources changed since the last build.
+  local stamp="$ROOT/firmware/dist/manifest.json" changed=""
+  if [ -f "$stamp" ]; then
+    changed="$(find "$ROOT/engine" "$ROOT/firmware/deskbunny" "$ROOT/firmware/nixxa_esp32" \
+      "$ROOT/firmware/boards.json" "$ROOT/firmware/build.sh" \
+      -type f -newer "$stamp" -print -quit 2>/dev/null)"
+  fi
+  if ! ls "$ROOT/firmware/dist/"*.hex >/dev/null 2>&1 || [ -n "$changed" ]; then
     need arduino-cli "see firmware/build.sh"
     echo "== building firmware images"
     TMPDIR="$STATE" "$ROOT/firmware/build.sh"
@@ -121,12 +133,9 @@ cmd_status() {
   fi
 }
 
-cmd_autostart() {
-  case "${1:-}" in
-    on)
-      [ -x "$BIN" ] || cmd_build
-      mkdir -p "$(dirname "$DESKTOP")"
-      cat > "$DESKTOP" <<EOF
+write_autostart() {
+  mkdir -p "$(dirname "$DESKTOP")"
+  cat > "$DESKTOP" <<EOF
 [Desktop Entry]
 Type=Application
 Name=DeskBunny
@@ -137,6 +146,13 @@ Terminal=false
 X-GNOME-Autostart-enabled=true
 X-GNOME-Autostart-Delay=5
 EOF
+}
+
+cmd_autostart() {
+  case "${1:-}" in
+    on)
+      [ -x "$BIN" ] || cmd_build
+      write_autostart
       echo "Autostart on: DeskBunny starts in the tray at every login ($DESKTOP)."
       echo "Rebuilds (scripts/deskbunny.sh build) are picked up at the next login."
       ;;
@@ -148,13 +164,10 @@ EOF
   esac
 }
 
-cmd_menu() {
-  case "${1:-}" in
-    on)
-      [ -x "$BIN" ] || cmd_build
-      mkdir -p "$(dirname "$MENU")"
-      # Launching while the tray copy runs just shows its window (single instance).
-      cat > "$MENU" <<EOF
+write_menu() {
+  mkdir -p "$(dirname "$MENU")"
+  # Launching while the tray copy runs just shows its window (single instance).
+  cat > "$MENU" <<EOF
 [Desktop Entry]
 Type=Application
 Name=DeskBunny
@@ -165,8 +178,15 @@ StartupWMClass=deskbunny-app
 Categories=Development;
 Terminal=false
 EOF
-      command -v update-desktop-database >/dev/null 2>&1 \
-        && update-desktop-database "$(dirname "$MENU")" >/dev/null 2>&1 || true
+  command -v update-desktop-database >/dev/null 2>&1 \
+    && update-desktop-database "$(dirname "$MENU")" >/dev/null 2>&1 || true
+}
+
+cmd_menu() {
+  case "${1:-}" in
+    on)
+      [ -x "$BIN" ] || cmd_build
+      write_menu
       echo "App menu entry added: $MENU"
       ;;
     off)
@@ -177,7 +197,22 @@ EOF
   esac
 }
 
+cmd_update() {
+  cmd_build
+  write_menu
+  echo "== app menu entry: $MENU"
+  write_autostart
+  echo "== autostart at login: $DESKTOP"
+  echo "== restarting in the tray"
+  cmd_stop
+  cmd_start --hidden
+  if [ -x /usr/bin/deskbunny-app ]; then
+    echo "note: the old package is still installed (sudo apt remove desk-bunny)"
+  fi
+}
+
 case "${1:-}" in
+  update) cmd_update ;;
   dev) cmd_dev ;;
   build) cmd_build ;;
   start) shift; cmd_start "$@" ;;
@@ -187,7 +222,7 @@ case "${1:-}" in
   autostart) shift; cmd_autostart "$@" ;;
   menu) shift; cmd_menu "$@" ;;
   *)
-    sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'
     exit 1
     ;;
 esac
