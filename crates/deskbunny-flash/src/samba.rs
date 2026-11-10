@@ -279,6 +279,7 @@ impl Samba {
         prog.emit(Stage::Done, 1.0, "Upload complete");
         Ok(Report {
             protocol: "samba".into(),
+            flashed_board: None,
             port: boot_port,
             baud: Some(baud),
             signature: None,

@@ -19,6 +19,8 @@ class AppState {
   loadError = $state<string | null>(null);
   /** The drawing editor dialog is open. */
   drawOpen = $state(false);
+  /** The selected board runs nixxa (ESP32): faces here are a preview only. */
+  espBoard = $state(false);
 
   sourceFace = $derived.by(() => {
     const s = this.source;

@@ -17,7 +17,7 @@ jobs:
   build:
     name: firmware
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
         with:
@@ -27,15 +27,38 @@ jobs:
         with:
           version: 1.x
 
-      # Cores (arduino:avr, arduino:renesas_uno) are installed by build.sh; cache them.
+      # Cores are installed by build.sh (arduino:avr, arduino:renesas_uno,
+      # esp32:esp32); cache them. The esp32 core is ~6 GB installed, so it gets
+      # its own cache keyed on the version pinned in build.sh, and the download
+      # staging directory is never cached.
+      - name: ESP32 core version
+        id: esp32
+        run: |
+          v="$(sed -n 's/^ESP32_CORE_VERSION="\${ESP32_CORE_VERSION:-\([0-9.]*\)}"$/\1/p' firmware/build.sh)"
+          test -n "$v" || { echo "::error::ESP32_CORE_VERSION not found in firmware/build.sh"; exit 1; }
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+
       - uses: actions/cache@v6
         with:
-          path: ~/.arduino15
+          path: |
+            ~/.arduino15
+            !~/.arduino15/packages/esp32
+            !~/.arduino15/staging
           key: arduino15-${{ runner.os }}-${{ hashFiles('firmware/boards.json', 'firmware/build.sh') }}
           restore-keys: arduino15-${{ runner.os }}-
 
+      - uses: actions/cache@v6
+        with:
+          path: ~/.arduino15/packages/esp32
+          key: arduino-esp32-${{ runner.os }}-${{ steps.esp32.outputs.version }}
+
+      - name: Host tests (nixxa protocol core)
+        run: make -C firmware/nixxa_esp32/tests
+
       - name: Build firmware images
-        run: bash firmware/build.sh
+        run: |
+          bash firmware/build.sh
+          rm -rf ~/.arduino15/staging # downloaded archives: not needed once installed
 
       - name: Size report
         run: |
@@ -44,11 +67,11 @@ jobs:
           {
             echo "### Firmware images (fwVersion $(jq -r .fwVersion firmware/dist/manifest.json))"
             echo
-            echo "| file | format | bytes | blobOffset | sha256 |"
-            echo "|---|---|---:|---:|---|"
-            jq -r '.images[] | [.file, .format, (.blobOffset|tostring), .sha256] | @tsv' firmware/dist/manifest.json |
-              while IFS=$'\t' read -r file fmt off sha; do
-                echo "| $file | $fmt | $(stat -c %s "firmware/dist/$file") | $off | \`${sha:0:16}…\` |"
+            echo "| file | format | chip | bytes | blobOffset | sha256 |"
+            echo "|---|---|---|---:|---:|---|"
+            jq -r '.images[] | [.file, .format, (.chip // "-"), (.blobOffset|tostring), .sha256] | @tsv' firmware/dist/manifest.json |
+              while IFS=$'\t' read -r file fmt chip off sha; do
+                echo "| $file | $fmt | $chip | $(stat -c %s "firmware/dist/$file") | $off | \`${sha:0:16}…\` |"
               done
           } | tee -a "$GITHUB_STEP_SUMMARY"
 

@@ -66,6 +66,11 @@ export function onFlashProgress(cb: (p: FlashProgress) => void): Promise<() => v
   return listen<FlashProgress>("flash-progress", (ev) => cb(ev.payload));
 }
 
+/** Enters the ESP32 ROM bootloader on `port`, reads the chip and resets the board
+ *  back into its app: "esp32" | "esp32c3" | "esp32s3", or null. */
+export const detectChip = (port: string): Promise<string | null> =>
+  isTauri ? invoke<string | null>("detect_chip", { port }) : mock().then((m) => m.detectChip(port));
+
 export const deviceInfo = (port: string): Promise<string | null> =>
   isTauri ? invoke<string | null>("device_info", { port }) : mock().then((m) => m.deviceInfo(port));
 

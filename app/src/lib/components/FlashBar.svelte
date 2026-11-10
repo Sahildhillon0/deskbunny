@@ -2,7 +2,7 @@
   import { onMount } from "svelte";
   import * as api from "../api";
   import { app } from "../state.svelte";
-  import type { Board, FlashProgress, FlashReport, FlashStage, Port } from "../types";
+  import { ESP_PROTOCOL, type Board, type FlashProgress, type FlashReport, type FlashStage, type Port } from "../types";
   import Icon from "./Icon.svelte";
 
   const STAGE_LABEL: Record<FlashStage, string> = {
@@ -27,14 +27,48 @@
   let userBoard = $state<string | null>(null);
   let scanning = $state(false);
   let phase = $state<Phase>({ kind: "idle" });
+  /** ESP32 chip found by detect_chip per port path ("" = no answer). */
+  let detected = $state<Record<string, string>>({});
+  let detecting = $state<string | null>(null);
 
   const port = $derived(ports.find((p) => p.path === portPath) ?? null);
-  const boardId = $derived(
-    userBoard ?? (port?.guessedBoard && boards.some((b) => b.id === port.guessedBoard) ? port.guessedBoard : boards[0]?.id ?? ""),
-  );
+  const autoBoard = $derived.by(() => {
+    if (!port) return null;
+    const chip = detected[port.path];
+    if (chip && boards.some((b) => b.id === chip)) return chip;
+    return port.guessedBoard && boards.some((b) => b.id === port.guessedBoard) ? port.guessedBoard : null;
+  });
+  const boardId = $derived(userBoard ?? autoBoard ?? boards[0]?.id ?? "");
   const board = $derived(boards.find((b) => b.id === boardId) ?? null);
+  const isEsp = $derived(board?.protocol === ESP_PROTOCOL);
   const flashing = $derived(phase.kind === "flashing");
-  const canFlash = $derived(!!port && !!board && !flashing);
+  const canFlash = $derived(!!port && !!board && !flashing && !detecting);
+
+  $effect(() => {
+    app.espBoard = isEsp;
+  });
+
+  // A port with an ESP VID:PID: ask the ROM bootloader which chip it is (VID:PID
+  // cannot tell C3 from S3). Once per port; the board resets back into its app.
+  $effect(() => {
+    const p = port;
+    if (!p || flashing || detecting || p.path in detected) return;
+    if (boards.find((b) => b.id === p.guessedBoard)?.protocol !== ESP_PROTOCOL) return;
+    detectChip(p.path);
+  });
+
+  async function detectChip(path: string) {
+    detecting = path;
+    let chip = "";
+    try {
+      chip = (await api.detectChip(path)) ?? "";
+    } catch {
+      // No answer is fine: the VID:PID guess stays and the user can pick the board.
+    } finally {
+      detected = { ...detected, [path]: chip };
+      detecting = null;
+    }
+  }
 
   function portLabel(p: Port) {
     const what = p.product || (p.vid ? `USB ${p.vid}:${p.pid ?? "????"}` : "Serial port");
@@ -47,6 +81,9 @@
     try {
       const list = await api.listPorts();
       ports = list;
+      // Forget chips on unplugged ports so a different board there is probed again.
+      const gone = Object.keys(detected).filter((path) => !list.some((p) => p.path === path));
+      if (gone.length) detected = Object.fromEntries(Object.entries(detected).filter(([path]) => !gone.includes(path)));
       if (!list.some((p) => p.path === portPath)) {
         selectPort((list.find((p) => p.guessedBoard) ?? list[0])?.path ?? "");
       }
@@ -70,7 +107,9 @@
       return "DeskBunny isn't allowed to use this USB device yet. Open the setup guide (the ? button, top left) and follow \"Prepare your computer\".";
     if (/CH340 driver/i.test(msg))
       return "Open the setup guide (the ? button, top left): the CH340 entry installs the driver version that works.";
-    if (/already running/i.test(msg)) return "Wait for the current upload to finish, then try again.";
+    if (/already running|upload is running/i.test(msg)) return "Wait for the current upload to finish, then try again.";
+    if (/ESP32/.test(msg) && /bootloader/i.test(msg))
+      return "Hold the BOOT button, tap EN/RST, release BOOT, then click Flash again. Charge-only USB cables can't flash.";
     if (/busy|in use|already open/i.test(msg))
       return "Another program has the port open. Close any serial monitor or Arduino IDE, then retry.";
     if (/bootloader|sync|no response|timed? ?out/i.test(msg))
@@ -163,14 +202,15 @@
   <div class="field board">
     <label class="label" for="board-select">
       Board
-      {#if port?.guessedBoard && port.guessedBoard === boardId}<span class="detected">· detected</span>{/if}
+      {#if port && detecting === port.path}<span class="detected">· detecting…</span>
+    {:else if autoBoard && autoBoard === boardId}<span class="detected">· detected</span>{/if}
     </label>
     <select
       id="board-select"
       class="select"
       value={boardId}
       onchange={(e) => (userBoard = e.currentTarget.value)}
-      disabled={flashing || !boards.length}
+      disabled={flashing || !boards.length || !!detecting}
     >
       {#each boards as b (b.id)}
         <option value={b.id}>{b.name}</option>
@@ -205,6 +245,20 @@
           <div class="fill" style:width={`${Math.max(2, Math.min(100, p.percent))}%`}></div>
         </div>
       </div>
+    {:else if phase.kind === "success" && phase.report.protocol === ESP_PROTOCOL}
+      {@const r = phase.report}
+      {@const flashedName = boards.find((b) => b.id === r.boardId)?.name ?? phase.board}
+      <div class="msg" class:ok={r.deviceVerified} class:warn={!r.deviceVerified}>
+        <Icon name={r.deviceVerified ? "check" : "alert"} />
+        <div>
+          <strong class="one-line">nixxa firmware is on your {flashedName}</strong>
+          <span class="message">Scan the QR code on the screen with the nixxa app</span>
+          {#each r.warnings as w, i (i)}
+            <span class="detail">{w}</span>
+          {/each}
+        </div>
+        <button class="btn ghost small" onclick={() => (phase = { kind: "idle" })}>Dismiss</button>
+      </div>
     {:else if phase.kind === "success"}
       {@const r = phase.report}
       <div class="msg" class:ok={r.deviceVerified} class:warn={!r.deviceVerified}>
@@ -237,6 +291,8 @@
           <button class="btn ghost small" onclick={() => (phase = { kind: "idle" })}>Dismiss</button>
         </div>
       </div>
+    {:else if port && board && isEsp}
+      <p class="ready">Ready to flash nixxa firmware to {board.name} on <code>{port.path}</code></p>
     {:else if port && board}
       <p class="ready">
         Ready to flash <b>{app.face.name || "UNTITLED"}</b> to {board.name} on <code>{port.path}</code>
@@ -248,7 +304,7 @@
 
   <button class="flash-btn" onclick={doFlash} disabled={!canFlash || !!boardsError}>
     <Icon name="bolt" />
-    {flashing ? "Flashing…" : "Flash to DeskBunny"}
+    {flashing ? "Flashing…" : isEsp ? "Flash nixxa firmware" : "Flash to DeskBunny"}
   </button>
 </div>
 

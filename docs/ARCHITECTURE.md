@@ -225,7 +225,7 @@ Tauri resource directory `firmware/`.
 
 Nano / Uno / Pro Mini share one ATmega328P image (`atmega328p.hex`); only the
 upload baud differs. "Nano" auto-detect tries 115200, then 57600.
-Later: Nano Every (UPDI), Nano 33 IoT (SAM-BA), ESP32 boards.
+Later: Nano Every (UPDI), Nano 33 IoT (SAM-BA). ESP32 boards: see "ESP32 + BLE (nixxa)" below.
 
 ## Tauri IPC (app/src-tauri <-> frontend)
 
@@ -242,8 +242,8 @@ Overlay strings: `"none" | "hearts" | "zzz" | "sweat" | "anger" | "tears" |
 = all moods), `cycleOverlay` the bit0 flag. The four cycle keys are optional on
 input (faces saved before they existed): defaults `"off"`, `10`, `[]`, `true`. `drawing` is optional (absent or `null` = no drawing) and is the JSON form of
 the drawing blob: `{ mode: "replace" | "over", frameMs, frames: string[] }`,
-`frameMs` 50..10000, `frames` 1..4 base64 strings of 1024 bytes each (page
-layout). The backend clamps `frameMs`, drops frames past 4 and pads or cuts
+`frameMs` 50..10000, `frames` 1..10 base64 strings of 1024 bytes each (page
+layout). The backend clamps `frameMs`, drops frames past 10 and pads or cuts
 each frame to 1024 bytes; an empty `frames` list means no drawing. The
 simulator (`sim_*`) and `flash` both use it. Numbers are the blob's byte types (`eyeY` is -128..127,
 everything else 0..255); the backend clamps every field into its documented range
@@ -329,3 +329,495 @@ on /dev/ttyUSB0. Is this an old-bootloader Nano? Try 'Nano (old bootloader)'.").
   bundled as `firmware/`.
 - Linux build deps: `libwebkit2gtk-4.1-dev libudev-dev libayatana-appindicator3-dev librsvg2-dev patchelf`.
 - Rust edition 2021, stable toolchain, `cargo clippy -- -D warnings` clean.
+
+## ESP32 + BLE (nixxa)
+
+The ESP32 family runs a different firmware from the Arduino boards. The desktop
+app flashes it once. After that a phone app (Flutter, `mobile/`, phase 2)
+pairs with it over BLE by scanning a QR code, then sends faces, drawings and
+phone notifications. Arduino boards keep working exactly as described above.
+The ESP32 images contain **no** face/drawing blob slots and are never patched.
+
+### Chips, wiring, images
+
+| board_id | Chip | FQBN | I2C SDA/SCL | Image (`firmware/dist/`) |
+|---|---|---|---|---|
+| `esp32` | ESP32 (WROOM-32 DevKit) | `esp32:esp32:esp32` | 21 / 22 | `esp32.bin` |
+| `esp32c3` | ESP32-C3 | `esp32:esp32:esp32c3:CDCOnBoot=cdc` | 8 / 9 | `esp32c3.bin` |
+| `esp32s3` | ESP32-S3 | `esp32:esp32:esp32s3:CDCOnBoot=cdc` | 8 / 9 | `esp32s3.bin` |
+
+- Display: SSD1306 128x64 over I2C only (no SPI, no RES pin). Probe 0x3C, then
+  0x3D, at 400 kHz. The firmware may raise the clock to 1 MHz when the panel
+  ACKs at that speed. The init sequence and control bytes are the same as the
+  AVR firmware's.
+- Sketch: `firmware/nixxa_esp32/`. `build.sh` copies `engine/` into it, as it
+  does for the AVR sketch. Libraries: the arduino-esp32 core and its bundled
+  libraries (BLE, LittleFS, Preferences, Wire, mbedtls) plus a vendored copy
+  of Nayuki's MIT `qrcodegen` C encoder, with its licence header kept. Nothing
+  else. The core version is pinned in `build.sh` (`ESP32_CORE_VERSION`).
+- Image = the arduino-cli `*.ino.merged.bin` (bootloader, partition table,
+  boot_app0 and app in one file) **cut off right after the app**, written at
+  flash offset **0x0** on every chip. The core pads merged.bin to the full
+  4 MB, which would also wipe app1 and the library. `fwtool.py espimage`
+  checks the cut: the app is byte-identical to `.ino.bin` and fits app0,
+  and 0x9000..0xDFFF is all 0xFF. Partition scheme: the core's `default` 4 MB layout (nvs 0x9000/0x5000,
+  otadata 0xE000, app0 0x10000, app1, spiffs used as LittleFS). The merged
+  image fills 0x9000..0xDFFF with 0xFF, so **every desktop flash erases NVS
+  and resets the pairing**, which is how a lost phone is recovered. The
+  LittleFS library partition is left as it was.
+- `boards.json` gets these three entries with `"protocol": "esptool"`,
+  `"baud": [460800, 115200]` (the fast rate first; ROM sync always happens at
+  115200), `"touch1200": false` and USB IDs (all `role: "app"`):
+  `esp32`: 10C4:EA60 (CP210x), 1A86:55D4 (CH9102); `esp32c3` and `esp32s3`:
+  303A:1001 (USB-Serial/JTAG). VID:PID cannot tell the chips apart; see
+  detection below.
+- `manifest.json` image entries for these files carry `"format": "bin"`,
+  `"chip": "esp32"|"esp32c3"|"esp32s3"`, `"flashOffset": 0`, and
+  `"blobOffset": null, "artOffset": null`. The magic-occurs-once check in CI
+  applies only to images that have blob offsets.
+
+### Desktop flashing (`deskbunny-flash`, protocol `esptool`)
+
+- The ROM-bootloader serial protocol is reached through the `espflash` crate
+  (library use, no CLI, no Python). Reset into the bootloader with the usual
+  DTR/RTS sequence, or with the USB-Serial/JTAG sequence on 303A:1001.
+- Chip detection happens at sync. If the chip found differs from the selected
+  board but is one of the three, the flasher uses that chip's image and adds a
+  warning ("Selected ESP32-C3 but found ESP32-S3; flashed the S3 image."). Any
+  other chip is an error.
+- Stages map onto `flash-progress`: `reset`, `sync` (connect + chip detect),
+  `erase`, `write` (compressed), `verify` (flash MD5 vs image), then a hard
+  reset into the app and `done`. `FlashReport.protocol = "esptool"`,
+  `signature` = chip name + MAC (e.g. `"ESP32-C3 34:85:18:AA:BB:CC"`),
+  `blobAddress` = 0, `verified` = MD5 matched, `faceName` = `""`,
+  `boardId` = the board actually flashed.
+- After the reset the flasher reads the banner as it does for AVR. On
+  303A:1001 the port re-enumerates, so it reopens the same path, retrying for
+  up to 5 s.
+- `flash(port, boardId, face)` ignores `face` for ESP32 boards. For ESP32
+  boards `deviceVerified` = the banner's board-id field equals the flashed
+  board, since there is no face name to compare. Images larger than the end
+  of app0 (0x150000) are refused before writing. A manifest image whose
+  `chip` doesn't match the board is refused. If the 460800 switch fails, the
+  flasher reconnects at 115200 and adds a warning. Only USB serial ports are
+  accepted, because the reset sequence is chosen from the USB PID.
+- Linux: the udev rule also grants `uaccess` on 10c4:ea60, 1a86:55d4 and
+  303a:1001. The setup check treats a rule without 303a as missing, so the
+  user is asked to reinstall it.
+- New command `detect_chip(port: string) -> string | null`: enters the ROM
+  bootloader, reads the chip and returns `"esp32"|"esp32c3"|"esp32s3"`
+  (`null` for anything else or no answer), then hard-resets the board back
+  into its app. Ports without an ESP VID:PID from the board table return
+  `null` without being opened, so the webview can't reset arbitrary devices.
+  It shares the flash lock. The frontend calls it when a port with an ESP VID:PID is
+  selected, to pick the board automatically.
+- Frontend: when the selected board is an ESP32 board, the flash button reads
+  "Flash nixxa firmware". The face editor still works as a preview, with a
+  note that faces are sent from the phone app. On success it shows "Scan the
+  QR code on the screen with the nixxa app".
+
+### Firmware behaviour (ESP32)
+
+- Serial 115200 (UART0, and also USB CDC on C3/S3). The boot banner and the
+  `?` reply are `DESKBUNNY <fw_version> <board_id> <active face name>`, so
+  `device_info` keeps working. Debug commands, one per line, for bench testing
+  without a phone:
+  `N <app>|<title>|<body>` fakes a message notification,
+  `C <caller>` fakes an incoming call, `D` dismisses the call, `Q` shows the
+  QR screen for 30 s, `K <0-20>` picks the idle screen (0 = the face, 1..20 =
+  that clock, same as op 0x25), `U` unpairs (same as op 0x7F), `S` prints the
+  state (paired, active slot, used slots, BLE connected, clock).
+- First boot: generate the 16-byte secret `K` with the hardware RNG
+  (`esp_fill_random` with the radio on) and store it in NVS namespace `nixxa`,
+  key `k`. Device ID = the last 3 bytes of the BT MAC, as 6 uppercase hex
+  characters, e.g. `A1B2C3`.
+- **Unpaired**: the screen shows the QR (left, 2 px per module) and to its
+  right the text `NIXXA` / `<ID>` / `SCAN ME`. The device advertises as
+  connectable to anyone, with name `NIXXA-<ID>` and the service UUID.
+- **Paired**: the device shows the active slot's face/drawing (the engine,
+  with the same compositing as on AVR). It advertises connectable to anyone,
+  exactly like unpaired (no filter accept list: after a reboot the controller
+  did not match the owner's resolvable private address against it, so the
+  owner could not reconnect). AUTH (K) decides who is the owner, so the
+  owner's phone reconnects by itself on power-up.
+- Storage: LittleFS. `/s/NN.bin` (NN = 00..15) holds one slot: 64-byte face
+  blob v1, then an optional drawing blob v2 (its `capacity` field ignored,
+  max 12285 bytes, which is what fits in `maxPayload` next to the slot,
+  face and artLen fields). `/state.bin` holds the active slot and the notification
+  config. On first boot, slot 00 = `db_face_default()` and it is active.
+  Corrupt or missing files fall back to the default face.
+- Idle screen: the face, or the clock picked with SET_CLOCK (op 0x25). The
+  clock is one of 20 styles drawn by `nx_clock.c` from the time set with
+  SET_TIME (`--:--` until then). The style is persisted in `/clock.bin`.
+- Notifications: see op 0x21. When a notification passes the filter, the
+  logo replaces the idle screen for 1.5 s: the app's 32x32 logo centred, its
+  name under it (a generic bell, doubled, when the phone sent no logo). Then a
+  card replaces it for `cardSecs` (default 6 s), then the idle screen returns.
+  The card shows a 16x16 version of the logo (or the bell) plus the app name on
+  the top row, a rule, the title (one line, truncated) and the body word-wrapped
+  below it, scrolling vertically if it doesn't fit. The per-app mood no longer
+  changes the screen. The queue holds 4 cards; older ones are dropped. A call
+  shows the caller with a ringing animation until DISMISS, a kind-2 NOTIFY,
+  or 45 s. Text: printable ASCII 0x20..0x7E in a full 5x7 font, anything else
+  rendered as `?` (the phone app transliterates first). Nothing is shown
+  during quiet hours or while DND is on (calls included, unless
+  `callsInQuiet` is set).
+
+### Pairing and security
+
+- QR payload (alphanumeric mode, ECC M, fits version 3 = 29x29):
+  `NIXXA1:<ID>:<K as 32 uppercase hex>`.
+- The phone connects and bonds with LE Secure Connections (Just Works:
+  encryption, with no MITM protection from BLE itself). It then reads INFO,
+  which carries a fresh 16-byte nonce per connection, and must send AUTH =
+  first 16 bytes of HMAC-SHA256(K, nonce || "NIXXA-AUTH") within 10 s of the
+  link being encrypted (30 s from connect if it never encrypts; Android's
+  pairing dialog can take a while). Only
+  someone who scanned the QR knows K, and that is what gives the MITM
+  protection.
+- If AUTH succeeds while unpaired, this bond becomes the owner, every other
+  bond is deleted, `paired = 1` is saved, and the face shows. If AUTH fails or
+  times out, the device disconnects and deletes the bonds made during that
+  connection, never the ones that existed when it started (the owner's).
+  `paired` and K live in NVS,
+  so a desktop reflash resets both. Every
+  connection, the owner's included, must AUTH before any other op
+  (`NOT_AUTHED` otherwise).
+- UNPAIR (op 0x7F), serial `U`, or a desktop reflash: delete all bonds,
+  generate a new K, `paired = 0`, show the QR. The library slots are kept.
+
+### BLE GATT
+
+Service `4e580001-6e69-4878-a100-6e6978786100`. Characteristics share the
+base, with the first group changed:
+
+| UUID | Name | Props | Security |
+|---|---|---|---|
+| `4e580002-…` | INFO | read | encrypted |
+| `4e580003-…` | RX (phone → device) | write, write-without-response | encrypted |
+| `4e580004-…` | TX (device → phone) | notify | encrypted |
+
+The device offers an MTU of 517. NimBLE (C3/S3) starts the exchange itself;
+Bluedroid (ESP32) only answers one, so the phone must request it (Android
+`requestMtu(517)`; iOS negotiates by itself). The BLE stack is fixed per
+chip by the core: Bluedroid on ESP32, NimBLE on C3/S3. Security is LE
+Secure Connections only (legacy pairing is refused). The name goes in the
+scan response, since UUID-128 plus the name don't fit in 31 bytes. The ESP32
+advertises from a resolvable private address; C3/S3 use the public one.
+
+INFO (41 bytes): `0 proto u8 = 1`, `1 chip u8 (0 esp32, 1 esp32c3, 2 esp32s3)`,
+`2 paired u8`, `3 slots u8 = 16`, `4 maxPayload u16 LE = 12352`,
+`6 id[3]`, `9 nonce[16]`, `25 fwVersion[16]` ASCII NUL-padded.
+
+Messages (both directions, little-endian): `op u8, seq u8, len u16, payload[len]`.
+A message may span several GATT writes or notifications; the receiver
+reassembles it by `len`. The phone sends the next message only after it gets
+the reply to the previous one (stop-and-wait), so no reordering is possible.
+Replies use `op | 0x80`, echo `seq`, and start with a status byte: `0 OK,
+1 NOT_AUTHED, 2 BAD_MSG, 3 BAD_SLOT, 4 NO_SPACE, 5 BUSY, 6 AUTH_FAILED`. A
+reassembled message larger than `maxPayload + 4` makes the device reply
+`BAD_MSG` and drop the bytes until the next write that starts a message (a
+write that arrives 300 ms after the previous one starts a new message).
+
+| Op | Name | Payload (phone → device) | Reply payload after status |
+|---|---|---|---|
+| 0x01 | AUTH | tag[16] | – |
+| 0x02 | GET_STATE | – | activeSlot u8, usedMask u16, notifEnabled u8, dnd u8 |
+| 0x03 | SET_TIME | unixSecs u32, tzOffsetMin i16 | – |
+| 0x10 | LIST_SLOTS | – | count u8, then per used slot: slot u8, name[12] |
+| 0x11 | PUT_SLOT | slot u8, face[64], artLen u16, art[artLen] | – |
+| 0x12 | GET_SLOT | slot u8 | face[64], artLen u16, art[artLen] |
+| 0x13 | DELETE_SLOT | slot u8 (the active slot can't be deleted → BAD_SLOT) | – |
+| 0x14 | ACTIVATE | slot u8 (shown at once and persisted) | – |
+| 0x20 | SET_NOTIF_CONFIG | see below | – |
+| 0x21 | NOTIFY | see below | – |
+| 0x22 | DISMISS | notifId u32 | – |
+| 0x23 | SET_DND | on u8 | – |
+| 0x24 | LIST_SEEN_APPS | – | count u8, then per app idLen u8, appId, nameLen u8, name (iOS) |
+| 0x25 | SET_CLOCK | style u8 (0 = the face, 1..20 = that clock; else BAD_MSG) | – (persisted) |
+| 0x7F | UNPAIR | – | – (the device then disconnects) |
+
+PUT_SLOT checks the face CRC (BAD_MSG if it's wrong). LIST_SLOTS reports a
+slot whose face name is empty as `SLOT NN`. DELETE_SLOT of an empty slot
+replies OK. A write that arrives while the previous message is still being
+handled gets BUSY. Defaults: notifications enabled, cardSecs 6, defaultMood 5
+(surprised). `enabled = 0` suppresses calls too. DND is persisted in
+`/state.bin`. Cards and calls also show while unpaired, so the serial `N`/`C`
+commands work on the bench.
+
+SET_NOTIF_CONFIG: `enabled u8, cardSecs u8 (2..30), defaultMood u8,
+quietStartMin u16, quietEndMin u16 (equal = no quiet hours; a range may wrap
+past midnight), callsInQuiet u8, ruleCount u8 (<= 32)`, then per rule:
+`idLen u8, appId[idLen] (Android package name or iOS bundle id, ASCII, <= 64),
+mood u8, flags u8 (bit0 show)`. Quiet hours use the time from SET_TIME. With
+no time set, quiet hours are ignored. Android filters on the phone and only
+sends what should be shown; the device-side rules matter on iOS (ANCS, phase
+3), where the device itself sees every notification.
+
+NOTIFY: `kind u8 (0 message, 1 incoming call, 2 call ended), notifId u32,
+mood u8 (0xFF = rule or default mood), appIdLen u8, appId, appNameLen u8,
+appName, titleLen u8, title, bodyLen u16, body, iconFlag u8, icon`. The icon
+flag is 0 (no icon), 1 (icon = 16x16, 32 bytes, from older phones) or 2 (icon
+= 32x32, 128 bytes, the app logo). Both are 1 bpp, row-major, MSB first,
+1 = lit. The device doubles a 16x16 icon. Strings are UTF-8 and have no NUL
+terminator. Bodies past 512 bytes are cut off.
+
+iOS (phase 3): the device also acts as an ANCS client on the owner's
+connection. It applies the rules by AppIdentifier and maps ANCS
+`IncomingCall` to kind 1. The GATT service above doesn't change.
+
+## Mobile app (nixxa, `mobile/`)
+
+Flutter app, package `com.zenithratech.nixxa`. Android ships first (phase 2);
+iOS follows in phase 3 with a Swift link and ANCS on the device.
+
+### Layout and ownership
+
+```
+mobile/
+  lib/model/        FaceDef (JSON identical to the desktop FaceDef), Drawing
+  lib/protocol/     blob v1/v2 codecs, pairing QR parser, Bunny (slot ops)
+  lib/link/         device_link.dart = the Dart contract for the native link
+                    device_link_channel.dart = the platform-channel implementation
+                    fake_device_link.dart = in-memory fake for UI work and tests
+  lib/ui/, lib/app/ screens and state (provider)
+  packages/nixxa_engine/   FFI plugin: compiles engine/*.c (copied by a script,
+                    never symlinked) for Android and the Linux host; EngineSim
+                    gives 1024-byte frames identical to the desktop simulator
+  android/          Kotlin: NixxaLinkService, notification listener, channels
+```
+
+- Codecs must be byte-identical to `crates/deskbunny-core`. Fixtures are
+  generated by a Rust test in that crate into `mobile/test/fixtures/`.
+- The preview always goes through `EngineSim` (the C engine). No Dart
+  re-implementation of the renderer.
+
+### Android link (native, Kotlin)
+
+`NixxaLinkService` is a foreground service (type `connectedDevice`, with a
+persistent "nixxa connected" notification). It owns the one BLE connection,
+so the link and notification forwarding survive the UI being closed or
+killed. The UI only talks to it.
+
+- Pairing: parse the QR, scan for the name `NIXXA-<ID>` (service-UUID
+  filter), connect, `createBond()`, `requestMtu(517)`, read INFO, write
+  AUTH (HMAC-SHA256 as in "Pairing and security"), then SET_TIME and
+  SET_NOTIF_CONFIG. On success it persists `{address, deviceId, K}` in
+  EncryptedSharedPreferences.
+- Reconnect: `connectGatt(autoConnect = true)` to the bonded address. It is
+  restarted on boot (`BOOT_COMPLETED`) and on Bluetooth turning on. Every
+  connection redoes MTU, INFO, AUTH, SET_TIME, SET_NOTIF_CONFIG and SET_DND
+  (when followDnd).
+- Messages: one FIFO queue, stop-and-wait per the GATT section, 5 s reply
+  timeout, split into writes of MTU-3 bytes with write-with-response.
+  NOTIFY from the listener and `request()` from the UI share the queue.
+  NOTIFY is dropped (not queued) while disconnected.
+- Notifications: a `NotificationListenerService`.
+  - Forward only when config.enabled and the package has a rule with `show`
+    set. Ongoing notifications, group summaries, our own package and
+    duplicate updates of the same key within 2 s are skipped.
+  - mood = the rule's mood (0xFF → device default).
+  - Text: title = EXTRA_TITLE; body = EXTRA_BIG_TEXT, else EXTRA_TEXT.
+    Accents are stripped and the rest is transliterated to ASCII.
+  - Icon: the app's launcher icon rendered to 32x32 and thresholded to 1 bpp
+    (Otsu on luminance; the minority class is the lit glyph). Falls back to the
+    notification's small icon, then to none (the device's bell).
+  - Calls: a notification with `CATEGORY_CALL` from the default dialer or a
+    telephony UI package (Samsung's in-call UI posts its own), or with
+    `EXTRA_CALL_TYPE` 1..3, when `calls` is set, is sent as NOTIFY kind 1
+    (title = caller). Its removal sends kind 2. Every call decision is logged
+    under `nixxa.listener`.
+  - Bonds: when setup fails with a GATT insufficient-auth/encryption status
+    (the bunny dropped its keys, e.g. after a power cut), the phone removes its
+    stale bond, bonds again on a fresh link and sets up on the new bond.
+  - Quiet hours are enforced on the device (it gets the time from SET_TIME).
+    DND: when followDnd, interruption-filter changes are sent as SET_DND.
+- Notifications removed on the phone send DISMISS (notifId = the key hash).
+
+Channels: MethodChannel `nixxa/link`, EventChannel `nixxa/link/status`
+(emits the `LinkStatus.toMap()` map on every change and once on listen).
+
+| Method | Args | Result |
+|---|---|---|
+| `status` | – | LinkStatus map |
+| `pair` | `{qr: String}` | LinkStatus map |
+| `forget` | – | null |
+| `request` | `{op: int, payload: Uint8List}` | Uint8List (after the status byte) |
+| `getNotifConfig` / `setNotifConfig` | – / NotifConfig map | NotifConfig map / null |
+| `hasNotificationAccess` | – | bool |
+| `openNotificationAccessSettings` | – | null |
+| `requestBatteryExemption` | – | null |
+| `listApps` | – | `[{appId, label, iconPng}]`: launcher apps plus apps seen posting, sorted by label |
+| `sendTestNotification` | – | null |
+
+Errors are PlatformExceptions whose `code` is one of the `LinkException`
+codes in `device_link.dart`; DEVICE_ERROR carries `details = status byte`.
+Permissions: BLUETOOTH_SCAN (neverForLocation), BLUETOOTH_CONNECT, CAMERA,
+POST_NOTIFICATIONS, FOREGROUND_SERVICE(_CONNECTED_DEVICE),
+RECEIVE_BOOT_COMPLETED, REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, plus a
+`<queries>` entry for launcher apps (no QUERY_ALL_PACKAGES). minSdk 26,
+target the latest SDK.
+
+### App screens (black theme, same feel as the desktop app)
+
+1. Pair: camera QR scan (mobile_scanner) with a manual-entry fallback,
+   progress through scan → bond → auth, and readable errors.
+2. Home: link state, chip and firmware, the active face (live EngineSim
+   preview), quick actions.
+3. Library: 16 slots on the device (LIST_SLOTS); tap to activate; edit,
+   delete, and a local library of saved faces. Import and export of
+   `.deskbunny.json`.
+4. Face editor: every FaceDef field, all 30 moods, overlays and the mood
+   cycle, with a live preview. "Send to bunny" = PUT_SLOT plus ACTIVATE.
+5. Drawing editor: 128x64 pixel canvas, 1..10 frames, frame time,
+   replace/over, GIF import (package `image`, dithered to 1 bpp), and a
+   size meter against `maxArtBytes`.
+6. Notifications: master switch, notification-access status, an app picker
+   with a per-app mood, quiet hours, follow DND, calls, card seconds, default
+   mood, and a test button.
+7. Device: firmware/chip info, battery-optimisation exemption, and Forget
+   device (UNPAIR).
+
+### Android implementation notes (as built)
+
+- K is encrypted with an Android Keystore AES-256-GCM key (alias
+  `nixxa_link_key`) and kept in SharedPreferences `nixxa_link`.
+  EncryptedSharedPreferences is deprecated. `allowBackup="false"`, so a
+  pairing is never restored onto another phone.
+- On Android 8–11, BLE scanning needs ACCESS_FINE_LOCATION, plus
+  BLUETOOTH/BLUETOOTH_ADMIN (all with maxSdkVersion 30). POST_NOTIFICATIONS
+  is requested, but denying it doesn't fail pairing.
+- Writes are chunked to `min(MTU-3, 512)`, since 512 is the maximum
+  attribute length.
+- SET_NOTIF_CONFIG puts shown rules first (max 32). A rule mood of 0xFF is
+  sent as `defaultMood`, because the firmware clamps unknown moods to 0. On
+  iOS, the device-side rules must therefore always carry a real mood.
+- Calls from the default dialer are forwarded whenever `calls` is on, with
+  no rule needed. Answering (Android 12+), declining or removing the call
+  sends kind 2. DISMISS is sent only for forwarded notifications.
+- AUTH_FAILED on reconnect means the bunny was reflashed or unpaired
+  elsewhere. The phone then forgets the pairing locally and the status
+  becomes `unpaired`. `removeBond` goes through reflection; if it fails,
+  the user removes the bond in Bluetooth settings.
+- `sendTestNotification` sends NOTIFY straight over the link, since the
+  listener skips the app's own package.
+- Link states: `connecting` covers the GATT connection through auth and
+  setup. `disconnected` means waiting on autoConnect. The reconnect backoff
+  runs from 1 to 30 s. SET_TIME is resent when the time zone or the clock
+  changes.
+- `./gradlew` must run with the JDK Flutter is configured with (21); the
+  system default (27) fails jlink. `flutter build` picks the right one by
+  itself.
+
+## iOS (phase 3)
+
+iOS doesn't let an app read other apps' notifications, so on an iPhone the
+**ESP32 itself is the ANCS client**. The iOS app pairs the bunny, sends faces
+and drawings, and pushes the notification rules. Notifications then flow from
+iOS straight to the bunny, with or without the app running.
+
+### Firmware: ANCS client (`firmware/nixxa_esp32/`)
+
+- Advertising (owner-only and open alike) carries the ANCS service
+  solicitation UUID `7905F431-B5CE-4E99-A40F-4B1E122D00D0`, so iOS offers
+  "Share System Notifications" when bonding.
+- After AUTH succeeds, the device discovers ANCS on the owner's connection.
+  When it isn't there (Android), ANCS stays off for that connection. When it
+  is: subscribe to Data Source then Notification Source. On each Added event
+  (skip `PreExisting` and `Silent`), fetch through the Control Point:
+  - Notification attributes: AppIdentifier, Title (64), Message (255).
+  - App attribute DisplayName, cached for the 32 most recent app IDs.
+- Filtering uses the stored SET_NOTIF_CONFIG: `enabled`, a rule with `show`
+  for the AppIdentifier, and quiet hours. The mood is the rule's mood.
+- `CategoryIDIncomingCall` maps to kind 1 (title = caller) when the calls
+  flag is set; its Removed event maps to kind 2. Other Removed events
+  dismiss a shown card. NotificationUID is used as the `notifId`. ANCS
+  notifications go through the same queue and card renderer as NOTIFY.
+- Rule mood `0xFF` = the config's `defaultMood`. This is a fix: it used to
+  clamp to 0. Unknown moods still clamp to 0.
+- SET_NOTIF_CONFIG gets an **optional trailing byte** after the rules:
+  `ext u8`, bit0 = forward calls (default 1 when the byte is absent). Old
+  payloads stay valid. Android and Dart encoders append it.
+- New op **0x24 LIST_SEEN_APPS**: no payload; reply `count u8`, then per app
+  `idLen u8, appId, nameLen u8, name`. These are the cached ANCS apps,
+  newest first. It's empty on Android connections and after a reboot (RAM
+  only).
+- The ESP32 (Bluedroid) image must stay within app0 (0x140000). If ANCS
+  doesn't fit, report it before changing the partition scheme.
+
+### iOS app (`mobile/ios/`, Swift)
+
+- `NixxaLink` (CoreBluetooth) implements the same `nixxa/link` MethodChannel
+  and EventChannel as Android, so the Dart side is unchanged.
+  - `CBCentralManager` uses a restore identifier, and the app declares
+    `UIBackgroundModes: bluetooth-central`.
+  - Pairing: scan for the service UUID and the name `NIXXA-<ID>`, connect,
+    then read INFO. Reading INFO triggers the system pairing dialog. Then
+    AUTH, SET_TIME and SET_NOTIF_CONFIG.
+  - Reconnect: `connect()` to the stored peripheral identifier, which iOS
+    keeps pending with no timeout, plus state restoration.
+  - K and the identifier live in the Keychain
+    (`kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`).
+  - Same queue, timeouts and framing rules as Android. iOS negotiates the
+    MTU itself; use `maximumWriteValueLength(for: .withResponse)`.
+- Method mapping on iOS:
+  - `hasNotificationAccess` = `peripheral.ancsAuthorized`.
+  - `openNotificationAccessSettings` opens the app's Settings page. The UI
+    explains: Settings › Bluetooth › NIXXA-… › Share System Notifications.
+  - `requestBatteryExemption` is a no-op.
+  - `listApps` = LIST_SEEN_APPS from the device (when connected) merged with
+    a built-in catalogue of common bundle IDs (Messages, Phone, Mail,
+    WhatsApp, Telegram, Signal, Gmail, Outlook, Slack, Teams, Discord,
+    Instagram, Messenger, Snapchat, X, LinkedIn, Calendar), with
+    `iconPng = null`.
+  - `followDnd`: the iOS app sends SET_DND from `INFocusStatusCenter` while
+    it runs (Focus Status permission). Otherwise DND isn't mirrored.
+  - `sendTestNotification` sends NOTIFY directly.
+- Info.plist: NSBluetoothAlwaysUsageDescription, NSCameraUsageDescription,
+  NSFocusStatusUsageDescription, the background mode. Minimum iOS 15.
+- UI (Dart, shared screens): on iOS the Notifications screen hides the
+  battery button and shows the Bluetooth-settings hint. The app picker adds
+  a "bundle ID" manual entry. Platform checks are local to the screens.
+
+### CI
+
+`.github/workflows/mobile.yml`:
+- ubuntu job: `flutter analyze`, `flutter test`, Kotlin unit tests (JDK 21),
+  `flutter build apk --debug`.
+- macos job: `flutter build ios --debug --no-codesign`, which is the only
+  place the Swift code compiles. This machine has no Xcode.
+
+### Phase 3 implementation notes (as built)
+
+- Advertising: the service UUID, the ANCS solicitation and the name don't fit
+  together in 31 + 31 bytes. The scan response always carries the full name,
+  and the advertising data alternates every 1 s (`NX_ADV_ROTATE_MS`) between
+  flags + service UUID and flags + ANCS solicitation. Scans that filter on
+  the service UUID see the bunny half the time.
+- ANCS: Data Source is subscribed before Notification Source. One Control
+  Point request is in flight at a time, with a 4 s timeout. A 32-entry LRU
+  maps app ID to DisplayName (names up to 32 bytes; it's cleared on UNPAIR).
+  If a name lookup fails, the card shows the bundle ID. ANCS cards need a
+  rule with `show`. NOTIFY from Android still shows unless a rule hides it.
+  The `ext` calls bit only gates ANCS calls. Service Changed is ignored; a
+  late ANCS appearance is picked up at the next connection.
+- On the ESP32, the ANCS client and the LRU (~4.5 KB) are allocated at boot,
+  because static DRAM is tight. If that allocation fails, ANCS is off.
+  `/state.bin` keeps the magic `NXS1` and always ends with `ext`. Older
+  firmware rejects the new file and falls back to its defaults.
+- Old firmware rejects the `ext` byte with BAD_MSG. The Kotlin and Swift
+  links then resend SET_NOTIF_CONFIG without it and remember that for the
+  rest of the connection.
+- iOS:
+  - Write chunks are `min(maximumWriteValueLength(.withoutResponse), 512)`,
+    sent with response. This avoids prepared writes.
+  - Pairing first checks `retrieveConnectedPeripherals`, since iOS may hold
+    the bunny connected for ANCS, in which case it doesn't advertise.
+  - A denied Bluetooth permission shows as `bluetoothOff`, and `pair`
+    fails with PERMISSION.
+  - `hasNotificationAccess` is false while the bunny is disconnected.
+  - The iOS-only UI sits on the Device screen (the battery button is hidden
+    and the Share System Notifications hint shown) and the Notifications
+    screen (access card, manual bundle-ID entry, Focus hint).
+- Not verified anywhere yet: the CoreBluetooth and Flutter bridge Swift
+  code. It compiles only in the macOS CI job or on a Mac.

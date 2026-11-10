@@ -12,6 +12,8 @@ pub enum Protocol {
     Avr109,
     Dfu,
     Samba,
+    /// ESP32 ROM serial bootloader (via the `espflash` crate).
+    Esptool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -67,6 +69,8 @@ impl Board {
             "leonardo" | "micro" => 28 * 1024,
             // RA4M1: 256 KiB flash, first 16 KiB is the Arduino bootloader.
             "uno_r4_minima" | "uno_r4_wifi" => 256 * 1024 - 0x4000,
+            // Merged image at 0x0 on the default 4 MB layout: up to the end of app0.
+            _ if self.protocol == Protocol::Esptool => 0x150000,
             _ => mcu_info(&self.mcu).map_or(u32::MAX, |m| m.flash_size - 512),
         }
     }
@@ -259,6 +263,44 @@ pub fn builtin_boards() -> Vec<Board> {
             "uno_r4_wifi.bin",
             vec![usb(0x2341, 0x1002, App)],
         ),
+        // ESP32 family (nixxa): VID:PID cannot tell the chips apart; `detect_chip`
+        // corrects the guess. esp32c3 precedes esp32s3 so 303A:1001 guesses C3.
+        b(
+            "esp32",
+            "ESP32",
+            "esp32:esp32:esp32",
+            "esp32",
+            Protocol::Esptool,
+            &[460800, 115200],
+            false,
+            "esp32.bin",
+            vec![
+                usb(0x10C4, 0xEA60, App), // CP210x
+                usb(0x1A86, 0x55D4, App), // CH9102
+            ],
+        ),
+        b(
+            "esp32c3",
+            "ESP32-C3",
+            "esp32:esp32:esp32c3:CDCOnBoot=cdc",
+            "esp32c3",
+            Protocol::Esptool,
+            &[460800, 115200],
+            false,
+            "esp32c3.bin",
+            vec![usb(0x303A, 0x1001, App)], // USB-Serial/JTAG
+        ),
+        b(
+            "esp32s3",
+            "ESP32-S3",
+            "esp32:esp32:esp32s3:CDCOnBoot=cdc",
+            "esp32s3",
+            Protocol::Esptool,
+            &[460800, 115200],
+            false,
+            "esp32s3.bin",
+            vec![usb(0x303A, 0x1001, App)], // USB-Serial/JTAG
+        ),
     ]
 }
 
@@ -303,7 +345,7 @@ mod tests {
     #[test]
     fn builtin_table_is_consistent() {
         let boards = builtin_boards();
-        assert_eq!(boards.len(), 9);
+        assert_eq!(boards.len(), 12);
         for b in &boards {
             if matches!(
                 b.protocol,
@@ -315,5 +357,44 @@ mod tests {
         }
         let nano = boards.iter().find(|b| b.id == "nano").unwrap();
         assert_eq!(nano.baud, vec![115200, 57600]);
+    }
+
+    #[test]
+    fn builtin_esp32_boards_match_contract() {
+        let boards = builtin_boards();
+        let get = |id: &str| boards.iter().find(|b| b.id == id).unwrap().clone();
+        for (id, image, ids) in [
+            (
+                "esp32",
+                "esp32.bin",
+                vec![(0x10C4, 0xEA60), (0x1A86, 0x55D4)],
+            ),
+            ("esp32c3", "esp32c3.bin", vec![(0x303A, 0x1001)]),
+            ("esp32s3", "esp32s3.bin", vec![(0x303A, 0x1001)]),
+        ] {
+            let b = get(id);
+            assert_eq!(b.protocol, Protocol::Esptool, "{id}");
+            assert_eq!(b.baud, vec![460800, 115200], "{id}");
+            assert!(!b.touch1200, "{id}");
+            assert_eq!(b.image, image);
+            assert_eq!(b.bin_base(), 0, "{id}: merged image is written at 0x0");
+            assert_eq!(b.usb_ids(UsbRole::App).collect::<Vec<_>>(), ids, "{id}");
+            assert_eq!(b.usb_ids(UsbRole::Bootloader).count(), 0, "{id}");
+        }
+    }
+
+    #[test]
+    fn parses_esptool_board_json() {
+        let json = r#"[{ "id": "esp32c3", "name": "ESP32-C3",
+            "fqbn": "esp32:esp32:esp32c3:CDCOnBoot=cdc", "mcu": "esp32c3",
+            "protocol": "esptool", "baud": [460800, 115200], "touch1200": false,
+            "image": "esp32c3.bin",
+            "usb": [{ "vid": "303A", "pid": "1001", "role": "app" }] }]"#;
+        let boards: Vec<Board> = serde_json::from_str(json).unwrap();
+        assert_eq!(boards[0].protocol, Protocol::Esptool);
+        assert_eq!(
+            serde_json::to_string(&Protocol::Esptool).unwrap(),
+            "\"esptool\""
+        );
     }
 }

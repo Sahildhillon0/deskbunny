@@ -69,7 +69,8 @@ pub fn prefer_callout(ports: Vec<PortInfo>) -> Vec<PortInfo> {
 ///
 /// Genuine Arduino IDs are unique. CH340/FTDI clone IDs match several boards (Nano,
 /// old-bootloader Nano, ...): guess "nano", which auto-falls-back to 57600 baud, and
-/// let the user override.
+/// let the user override. ESP32-C3 and -S3 share 303A:1001: guess "esp32c3" and let
+/// `detect_chip` correct it.
 pub fn guess_board(port: &PortInfo, boards: &[Board]) -> Option<String> {
     let usb = port.usb.as_ref()?;
     let matches: Vec<&Board> = boards
@@ -82,6 +83,7 @@ pub fn guess_board(port: &PortInfo, boards: &[Board]) -> Option<String> {
         many => many
             .iter()
             .find(|b| b.id == "nano")
+            .or_else(|| many.iter().find(|b| b.id == "esp32c3"))
             .or_else(|| many.first())
             .map(|b| b.id.clone()),
     }
@@ -115,6 +117,18 @@ mod tests {
         assert_eq!(g(0x2341, 0x0036).as_deref(), Some("leonardo"));
         assert_eq!(g(0x2341, 0x0069).as_deref(), Some("uno_r4_minima"));
         assert_eq!(g(0x2341, 0x1002).as_deref(), Some("uno_r4_wifi"));
+        assert_eq!(g(0x10C4, 0xEA60).as_deref(), Some("esp32"));
+        assert_eq!(g(0x1A86, 0x55D4).as_deref(), Some("esp32"));
+        assert_eq!(g(0x303A, 0x1001).as_deref(), Some("esp32c3"));
+        // The CH340 used on Nano clones (and some ESP boards) stays a Nano guess.
+        assert_eq!(g(0x1A86, 0x7523).as_deref(), Some("nano"));
+        // 303A:1001 guesses C3 whatever the table order.
+        let mut reversed = boards.clone();
+        reversed.reverse();
+        assert_eq!(
+            guess_board(&usb_port("x", 0x303A, 0x1001), &reversed).as_deref(),
+            Some("esp32c3")
+        );
         assert_eq!(g(0x1234, 0x5678), None);
         let plain = PortInfo {
             path: "/dev/ttyS0".into(),
