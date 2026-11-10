@@ -19,6 +19,10 @@ class AppState {
   loadError = $state<string | null>(null);
   /** The drawing editor dialog is open. */
   drawOpen = $state(false);
+  /** The live screens dialog is open. */
+  liveOpen = $state(false);
+  /** Design being edited in the designer (a copy), or null when closed. */
+  designing = $state<import("./types").Design | null>(null);
 
   sourceFace = $derived.by(() => {
     const s = this.source;

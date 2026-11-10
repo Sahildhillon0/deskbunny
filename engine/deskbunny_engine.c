@@ -1403,3 +1403,141 @@ void db_engine_render(db_engine_t *e, uint32_t now_ms, uint8_t fb[DB_FB_SIZE])
   if (f->flags & DB_FLAG_INVERT) fb_invert(fb);
   if (f->flags & DB_FLAG_ROTATE180) fb_rotate180(fb);
 }
+
+/* ------------------------------------------------------------------------ */
+/* Clawd (live link Claude screen)                                           */
+/* ------------------------------------------------------------------------ */
+#define CL_BW 44 /* body */
+#define CL_BH 24
+#define CL_LEG 6 /* leg height */
+#define CL_ARM 6 /* arm width */
+
+static void rect(uint8_t *fb, int16_t x, int16_t y, int16_t w, int16_t h, uint8_t on)
+{
+  int16_t i;
+  for (i = 0; i < w; i++) vspan(fb, (int16_t)(x + i), y, (int16_t)(y + h - 1), on);
+}
+
+/* One eye, cut out of the lit body. side: -1 left, +1 right. */
+static void clawd_eye(uint8_t *fb, uint8_t expr, int16_t cx, int16_t cy, int16_t side)
+{
+  switch (expr) {
+  case DB_CLAWD_HAPPY:
+    line2(fb, (int16_t)(cx - 4), (int16_t)(cy + 1), cx, (int16_t)(cy - 3), 0);
+    line2(fb, cx, (int16_t)(cy - 3), (int16_t)(cx + 4), (int16_t)(cy + 1), 0);
+    break;
+  case DB_CLAWD_CLOSED:
+    rect(fb, (int16_t)(cx - 4), cy, 9, 2, 0);
+    break;
+  case DB_CLAWD_WIDE:
+    rect(fb, (int16_t)(cx - 3), (int16_t)(cy - 6), 7, 12, 0);
+    rect(fb, (int16_t)(cx - 1 + side), (int16_t)(cy - 1), 2, 3, 1);
+    break;
+  case DB_CLAWD_SQUINT: /* chevrons pointing at the middle */
+    line2(fb, (int16_t)(cx + side * 3), (int16_t)(cy - 3), (int16_t)(cx - side * 2), cy, 0);
+    line2(fb, (int16_t)(cx - side * 2), cy, (int16_t)(cx + side * 3), (int16_t)(cy + 3), 0);
+    break;
+  case DB_CLAWD_DEAD:
+    line2(fb, (int16_t)(cx - 3), (int16_t)(cy - 3), (int16_t)(cx + 3), (int16_t)(cy + 3), 0);
+    line2(fb, (int16_t)(cx - 3), (int16_t)(cy + 3), (int16_t)(cx + 3), (int16_t)(cy - 3), 0);
+    break;
+  case DB_CLAWD_WORRIED:
+    rect(fb, (int16_t)(cx - 2), (int16_t)(cy - 1), 4, 7, 0);
+    line2(fb, (int16_t)(cx - side * 4), (int16_t)(cy - 7), (int16_t)(cx + side * 3), (int16_t)(cy - 5), 0);
+    break;
+  default: /* OPEN, FOCUS */
+    rect(fb, (int16_t)(cx - 2), (int16_t)(cy - 4), 4, 8, 0);
+    break;
+  }
+}
+
+/* Time runs in 32 ms ticks, 16 bits wide; every period is a power of two
+ * ticks, so the wrap after ~35 min is seamless (and AVR needs no 32-bit
+ * divisions). */
+void db_clawd_render(uint8_t anim, uint8_t expr, uint32_t now_ms, uint8_t fb[DB_FB_SIZE])
+{
+  uint16_t k = (uint16_t)(now_ms >> 5), t;
+  int16_t cx = DB_W / 2, top, x0, i;
+  int8_t sq = 0;                    /* squash: body 2*sq px wider, 3*sq/2 px shorter */
+  int8_t lift_a = 0, lift_b = 0;    /* legs 0,2 and 1,3 raised by this many px */
+  int8_t arm_l = 8, arm_r = 8;      /* arm top, px below the body top */
+  int8_t look = 0, eye_dy = 0;
+  uint8_t legs = 1, arms_up = 0;
+
+  memset(fb, 0, DB_FB_SIZE);
+  if (anim >= DB_CLAWD_ANIM_COUNT) anim = DB_CLAWD_IDLE;
+  if (expr >= DB_CLAWD_EXPR_COUNT) expr = DB_CLAWD_OPEN;
+  top = DB_CLAWD_GROUND - CL_LEG - CL_BH;
+
+  switch (anim) {
+  case DB_CLAWD_WALK: { /* 8.2 s there and back, a step every 128 ms */
+    uint8_t step = (uint8_t)((k >> 2) & 1u);
+    t = k & 255u;
+    cx = (int16_t)(30 + (int16_t)((t < 128u ? t : 256u - t) * 17u / 32u));
+    look = t < 128u ? 2 : -2;
+    if (step) lift_a = 2;
+    else lift_b = 2;
+    top = (int16_t)(top + step);
+    break;
+  }
+  case DB_CLAWD_JUMP: /* one hop per 1.02 s: squash, 24 ticks airborne, squash */
+    t = k & 31u;
+    if (t < 4u || t >= 28u) {
+      sq = 2;
+      top = (int16_t)(top + 3);
+    } else {
+      t = (uint16_t)(t - 4u);
+      top = (int16_t)(top - (int16_t)(t * (24u - t) / 9u)); /* peak 16 px */
+      arms_up = 1;
+      if (t >= 7u && t <= 16u) {
+        astroid(fb, (int16_t)(cx - CL_BW / 2 - 14), (int16_t)(top + 2), 4, 1);
+        astroid(fb, (int16_t)(cx + CL_BW / 2 + 14), (int16_t)(top + 2), 4, 1);
+      }
+    }
+    break;
+  case DB_CLAWD_SHAKE: /* 0.6 s of jitter every 2 s */
+    if ((k & 63u) < 19u) cx = (int16_t)(cx + ((k & 2u) ? 2 : -2));
+    question(fb, (int16_t)(cx - 5), (int16_t)(top - 17), 1);
+    break;
+  case DB_CLAWD_SLEEP:
+    legs = 0;
+    expr = DB_CLAWD_CLOSED;
+    top = (int16_t)(DB_CLAWD_GROUND - CL_BH - 1 + (int16_t)((k >> 6) & 1u));
+    arm_l = arm_r = 12;
+    t = (uint16_t)((k >> 4) % 3u);
+    zee(fb, (int16_t)(cx + CL_BW / 2 + 4), (int16_t)(top - 3), 3, 1);
+    if (t >= 1u) zee(fb, (int16_t)(cx + CL_BW / 2 + 10), (int16_t)(top - 10), 4, 1);
+    if (t >= 2u) zee(fb, (int16_t)(cx + CL_BW / 2 + 17), (int16_t)(top - 18), 5, 1);
+    break;
+  case DB_CLAWD_WORK:
+    if ((k >> 2) & 1u) arm_l = 6;
+    else arm_r = 6;
+    eye_dy = 2;
+    break;
+  default: /* IDLE */
+    top = (int16_t)(top + (int16_t)((k >> 5) & 1u));
+    break;
+  }
+
+  if (expr == DB_CLAWD_FOCUS) look = ((k >> 6) & 1u) ? 2 : -2;
+  if ((expr == DB_CLAWD_OPEN || expr == DB_CLAWD_WIDE || expr == DB_CLAWD_WORRIED ||
+       expr == DB_CLAWD_FOCUS) && (k & 127u) < 4u)
+    expr = DB_CLAWD_CLOSED; /* 128 ms blink every 4.1 s */
+
+  x0 = (int16_t)(cx - CL_BW / 2 - sq);
+  if (legs) {
+    static const uint8_t k_leg_x[4] = { 4, 12, 28, 36 };
+    int16_t y = (int16_t)(top + CL_BH - sq - sq / 2);
+    int16_t foot = imin(DB_CLAWD_GROUND - 1, (int16_t)(y + CL_LEG - 1)); /* dangle when airborne */
+    for (i = 0; i < 4; i++)
+      rect(fb, (int16_t)(cx - CL_BW / 2 + k_leg_x[i]), y, 4,
+           (int16_t)(foot - ((i & 1) ? lift_b : lift_a) - y + 1), 1);
+  }
+  rect(fb, x0, top, (int16_t)(CL_BW + 2 * sq), (int16_t)(CL_BH - sq - sq / 2), 1);
+  if (arms_up) arm_l = arm_r = -6;
+  rect(fb, (int16_t)(x0 - CL_ARM), (int16_t)(top + arm_l), CL_ARM, arms_up ? 11 : 7, 1);
+  rect(fb, (int16_t)(x0 + CL_BW + 2 * sq), (int16_t)(top + arm_r), CL_ARM, arms_up ? 11 : 7, 1);
+  top = (int16_t)(top + 9 + eye_dy);
+  clawd_eye(fb, expr, (int16_t)(x0 + sq + 12 + look), top, -1);
+  clawd_eye(fb, expr, (int16_t)(x0 + sq + CL_BW - 13 + look), top, 1);
+}

@@ -158,6 +158,14 @@ pub fn off_blob(capacity: usize) -> Vec<u8> {
     blob
 }
 
+/// One frame (or XOR delta) as a PackBits stream, the payload of the live
+/// link's `!F` / `!X` commands.
+pub fn pack(src: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(src.len() / 4);
+    pack_into(src, &mut out);
+    out
+}
+
 /// PackBits: token t < 128 is followed by t + 1 literal bytes; t >= 128 by one
 /// byte repeated t - 126 times (2..129). Matches `db_art_frame` in the engine.
 fn pack_into(src: &[u8], out: &mut Vec<u8>) {

@@ -9,6 +9,8 @@
   import SetupGuide from "./lib/components/SetupGuide.svelte";
   import UpdateDialog from "./lib/components/UpdateDialog.svelte";
   import DrawingEditor from "./lib/components/DrawingEditor.svelte";
+  import LivePanel from "./lib/components/LivePanel.svelte";
+  import DesignEditor from "./lib/components/DesignEditor.svelte";
   import { setup } from "./lib/setup.svelte";
   import { updater } from "./lib/updater.svelte";
 
@@ -43,8 +45,12 @@
   </footer>
 </div>
 
-{#if app.drawOpen}
+{#if app.designing}
+  <DesignEditor />
+{:else if app.drawOpen}
   <DrawingEditor />
+{:else if app.liveOpen}
+  <LivePanel />
 {:else if setup.open}
   <SetupGuide />
 {:else if updater.open}

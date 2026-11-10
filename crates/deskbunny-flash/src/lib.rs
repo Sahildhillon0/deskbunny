@@ -13,6 +13,7 @@ pub mod boards;
 pub mod dfu;
 pub mod image;
 pub mod link;
+pub mod live;
 pub mod ports;
 pub mod samba;
 pub mod stk500v1;
@@ -30,6 +31,7 @@ use serde::Serialize;
 pub use boards::{Board, Protocol};
 pub use image::{art_capacity, patch_art, patch_face, FirmwareImage};
 pub use link::{SerialHost, SerialLink, SystemHost};
+pub use live::LiveLink;
 pub use ports::{list_ports, PortInfo};
 
 /// Every error carries a sentence a user can act on.

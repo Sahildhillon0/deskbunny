@@ -2,10 +2,16 @@
 //! The webview is untrusted: commands take narrow, validated inputs and never
 //! expose generic file or serial access.
 
+mod claude;
+mod desktop;
 mod faces;
 mod firmware;
+mod hooks;
+mod live;
+mod server;
 mod setup;
 mod update;
+mod weather;
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -20,7 +26,9 @@ use deskbunny_flash::{
     art_capacity, patch_art, patch_face, uploader_for, Report, SerialHost, SystemHost,
 };
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::menu::{Menu, MenuItem};
+use tauri::tray::TrayIconBuilder;
+use tauri::{AppHandle, Emitter, Manager, State, WindowEvent};
 
 type CmdResult<T> = Result<T, String>;
 
@@ -214,8 +222,9 @@ async fn import_face(app: AppHandle) -> CmdResult<Option<FaceDef>> {
 }
 
 #[tauri::command]
-async fn device_info(port: String) -> CmdResult<Option<String>> {
+async fn device_info(app: AppHandle, port: String) -> CmdResult<Option<String>> {
     tauri::async_runtime::spawn_blocking(move || {
+        let _pause = app.state::<Arc<live::Live>>().pause();
         query_device_info(&SystemHost, &port, Duration::from_millis(3500))
             .map_err(|e| e.to_string())
     })
@@ -263,6 +272,8 @@ async fn flash(
             .0
             .try_lock()
             .map_err(|_| "Another upload is already running.".to_string())?;
+        // Live mode lets go of the port (and resumes when this returns).
+        let _pause = app2.state::<Arc<live::Live>>().pause();
         let host: Arc<dyn SerialHost> = Arc::new(SystemHost);
         let uploader = uploader_for(&board, host.clone());
         let emit = |p: deskbunny_flash::Progress| {
@@ -410,6 +421,222 @@ fn update_open_releases(app: AppHandle) -> CmdResult<()> {
     update::open_releases(&app)
 }
 
+#[tauri::command]
+fn live_get_config(live: State<Arc<live::Live>>) -> live::LiveConfig {
+    live.config()
+}
+
+#[tauri::command]
+fn live_set_config(
+    live: State<Arc<live::Live>>,
+    config: live::LiveConfig,
+) -> CmdResult<live::LiveConfig> {
+    live.set_config(config)
+}
+
+#[tauri::command]
+fn live_status(live: State<Arc<live::Live>>) -> live::LiveStatus {
+    live.status()
+}
+
+#[tauri::command]
+fn live_pin(live: State<Arc<live::Live>>, screen: Option<live::ScreenRef>) {
+    live.pin(screen);
+}
+
+#[tauri::command]
+fn live_preview(
+    live: State<Arc<live::Live>>,
+    screen: live::ScreenRef,
+    t_ms: u32,
+) -> tauri::ipc::Response {
+    let fb = live::preview(&live, &screen, t_ms);
+    tauri::ipc::Response::new(fb.to_vec())
+}
+
+// --- designs ------------------------------------------------------------------
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DesignRender {
+    frame: Vec<u8>,
+    bounds: Vec<deskbunny_core::layout::Bounds>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DesignCatalog {
+    templates: Vec<deskbunny_core::layout::Design>,
+    tokens: Vec<(String, String)>,
+    icons: Vec<String>,
+}
+
+/// Limits that keep a design (and designs.json) sane; the editor stays inside them.
+fn check_design(d: &deskbunny_core::layout::Design) -> CmdResult<()> {
+    use deskbunny_core::layout::Element;
+    let id_ok = !d.id.is_empty()
+        && d.id.len() <= 40
+        && d.id
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_');
+    if !id_ok {
+        return Err("A design id is 1-40 characters of a-z, 0-9, - and _.".into());
+    }
+    if d.name.trim().is_empty() || d.name.chars().count() > 32 {
+        return Err("Give the design a name of up to 32 characters.".into());
+    }
+    if d.elements.len() > 64 {
+        return Err("A design holds at most 64 elements.".into());
+    }
+    for e in &d.elements {
+        match e {
+            Element::Text { text, .. } if text.chars().count() > 80 => {
+                return Err("A text element holds at most 80 characters.".into())
+            }
+            Element::Bitmap { w, h, data, .. } if *w > 128 || *h > 64 || data.len() > 2000 => {
+                return Err("A drawing is at most 128x64 pixels.".into())
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn design_list(live: State<Arc<live::Live>>) -> Vec<deskbunny_core::layout::Design> {
+    live.designs()
+}
+
+#[tauri::command]
+fn design_catalog() -> DesignCatalog {
+    use deskbunny_core::layout;
+    DesignCatalog {
+        templates: layout::templates(),
+        tokens: layout::TOKENS
+            .iter()
+            .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
+            .collect(),
+        icons: layout::ICONS.iter().map(|s| (*s).to_string()).collect(),
+    }
+}
+
+/// Insert or replace (by id) and save.
+#[tauri::command]
+fn design_save(
+    live: State<Arc<live::Live>>,
+    design: deskbunny_core::layout::Design,
+) -> CmdResult<Vec<deskbunny_core::layout::Design>> {
+    let mut design = design;
+    design.name = design.name.trim().to_string();
+    check_design(&design)?;
+    let mut all = live.designs();
+    match all.iter_mut().find(|d| d.id == design.id) {
+        Some(d) => *d = design,
+        None => all.push(design),
+    }
+    live.set_designs(all)?;
+    Ok(live.designs())
+}
+
+#[tauri::command]
+fn design_delete(
+    live: State<Arc<live::Live>>,
+    id: String,
+) -> CmdResult<Vec<deskbunny_core::layout::Design>> {
+    let mut all = live.designs();
+    all.retain(|d| d.id != id);
+    live.set_designs(all)?;
+    Ok(live.designs())
+}
+
+/// Render an unsaved design (the editor's preview), with element bounds.
+#[tauri::command]
+fn design_render(
+    live: State<Arc<live::Live>>,
+    design: deskbunny_core::layout::Design,
+) -> DesignRender {
+    let (fb, bounds) = live.render_design(&design);
+    DesignRender {
+        frame: fb.to_vec(),
+        bounds,
+    }
+}
+
+// --- weather ------------------------------------------------------------------
+
+#[tauri::command]
+async fn weather_search(query: String) -> CmdResult<Vec<weather::Place>> {
+    tauri::async_runtime::spawn_blocking(move || weather::search(&query))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+fn weather_now(live: State<Arc<live::Live>>) -> weather::WeatherNow {
+    let mut w = live.weather_now();
+    w.age_secs = w
+        .fetched
+        .filter(|_| w.weather.is_some())
+        .map(|t| t.elapsed().as_secs());
+    w
+}
+
+#[tauri::command]
+fn claude_hooks_status() -> CmdResult<hooks::HooksStatus> {
+    hooks::status()
+}
+
+#[tauri::command]
+fn claude_hooks_install() -> CmdResult<hooks::HooksStatus> {
+    hooks::install()
+}
+
+#[tauri::command]
+fn claude_hooks_remove() -> CmdResult<hooks::HooksStatus> {
+    hooks::remove()
+}
+
+#[tauri::command]
+fn claude_view(live: State<Arc<live::Live>>) -> claude::ClaudeView {
+    live.claude_view()
+}
+
+/// Puts a sample notification on the board (the panel's "Test" button).
+#[tauri::command]
+fn live_test_notification(live: State<Arc<live::Live>>) {
+    live.notify(
+        "DeskBunny",
+        "Test notification",
+        "This is how a desktop notification looks on the board.",
+    );
+}
+
+/// Tray icon: live mode keeps running with the window closed.
+fn build_tray(app: &tauri::App) -> tauri::Result<()> {
+    let show = MenuItem::with_id(app, "show", "Show DeskBunny", true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
+    let menu = Menu::with_items(app, &[&show, &quit])?;
+    let mut tray = TrayIconBuilder::with_id("main")
+        .tooltip("DeskBunny")
+        .menu(&menu)
+        .on_menu_event(|app, event| match event.id.as_ref() {
+            "show" => {
+                if let Some(w) = app.get_webview_window("main") {
+                    let _ = w.show();
+                    let _ = w.unminimize();
+                    let _ = w.set_focus();
+                }
+            }
+            "quit" => app.exit(0),
+            _ => {}
+        });
+    if let Some(icon) = app.default_window_icon() {
+        tray = tray.icon(icon.clone());
+    }
+    tray.build(app)?;
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -419,6 +646,39 @@ pub fn run() {
         .manage(Sims::default())
         .manage(update::Pending::default())
         .manage(FlashLock::default())
+        .setup(|app| {
+            let live = live::start(app.handle());
+            server::start(live.clone());
+            desktop::start(live.clone());
+            weather::start(live.clone());
+            app.manage(live);
+            let tray = build_tray(app);
+            if let Err(e) = &tray {
+                // No tray (e.g. a desktop without one): closing then quits as before.
+                log::warn!("tray icon unavailable: {e}");
+            }
+            // The window starts hidden (tauri.conf.json). `--hidden` (autostart
+            // at login) keeps it that way and lives in the tray; without a
+            // tray there would be no way back to it, so show it then.
+            let hidden = std::env::args().any(|a| a == "--hidden");
+            if !hidden || tray.is_err() {
+                if let Some(w) = app.get_webview_window("main") {
+                    let _ = w.show();
+                }
+            }
+            Ok(())
+        })
+        .on_window_event(|window, event| {
+            // With live mode on, closing the window hides it; the tray quits.
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                let app = window.app_handle();
+                let on = app.state::<Arc<live::Live>>().config().enabled;
+                if on && app.tray_by_id("main").is_some() {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             list_presets,
             list_boards,
@@ -443,6 +703,23 @@ pub fn run() {
             update_check,
             update_install,
             update_open_releases,
+            live_get_config,
+            live_set_config,
+            live_status,
+            live_pin,
+            live_preview,
+            live_test_notification,
+            claude_hooks_status,
+            claude_hooks_install,
+            claude_hooks_remove,
+            claude_view,
+            design_list,
+            design_catalog,
+            design_save,
+            design_delete,
+            design_render,
+            weather_search,
+            weather_now,
         ])
         .run(tauri::generate_context!())
         .expect("error while running DeskBunny");

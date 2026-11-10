@@ -123,8 +123,8 @@ left and is stored in the slot's own header (bytes 14..15), so the flasher and
 
 | Image | Slot (bytes, header included) |
 |-------|------:|
-| atmega328p (Uno R3, Nano, Pro Mini) | 8192 |
-| atmega32u4 (Leonardo, Micro) | 4032 |
+| atmega328p (Uno R3, Nano, Pro Mini) | 5632 |
+| atmega32u4 (Leonardo, Micro) | 3200 |
 | atmega2560 (Mega) | 32000 |
 | Uno R4 Minima / WiFi | 61440 |
 
@@ -153,6 +153,64 @@ engine is the decoder; `drawing.rs` is the encoder and `flashSize` in
 
 No CRC: a bad magic, version, mode or frame count, or a stream that runs past
 the slot, turns the drawing off (the face shows instead).
+
+## Live link v1 (serial, app -> board)
+
+With the app running, it can take over the screen: clock, weather, Claude
+session status. The board stays autonomous: 30 s without a command and it
+goes back to its flashed face (and drawing), so a closed app or a sleeping PC
+never leaves a stale screen.
+
+Opening the port resets boards with an auto-reset circuit (Uno, Nano, Pro
+Mini: DTR), which costs ~1.5 s and the splash. So one process (the app) opens
+the port once and keeps it; anything else that wants to change the screen
+(e.g. a Claude Code hook) talks to the app, never to the port.
+
+115200 8N1. Commands are ASCII lines ending in `\n` (`\r` is ignored), at most
+39 characters; longer lines are dropped without a reply. Every command
+answers one line: `OK`, `ERR`, or the reply named below. Lines that don't
+start with `!` (other than `?`) are ignored silently.
+
+| Command | Reply | Effect |
+|---|---|---|
+| `?` | banner | unchanged (`DESKBUNNY <fw> <board> <name>`) |
+| `!V` | `LIVE 1 C` / `LIVE 1` | live link version; `C` = Clawd is built in |
+| `!P` | `OK` / `ERR` | keepalive; `ERR` when not in live mode (the board timed out or rebooted: resend the screen) |
+| `!H` | `OK` | back to the flashed face and drawing now |
+| `!M <mood> <overlay>[ <caption>]` | `OK` | the engine face with this mood (0..29) and overlay (0..7), flashed geometry and flags, cycle off |
+| `!C <anim> <expr>[ <caption>]` | `OK` | Clawd (below); `ERR` on boards without it (32u4) |
+| `!F <n>` | `K`, then `OK` / `ERR` | still frame: after `K`, send `n` bytes (2..1200) of one PackBits frame (Drawing blob v2 encoding), drawn onto a clear screen |
+| `!X <n>` | `K`, then `OK` / `ERR` | like `!F`, XOR-ed onto the frame shown now (deltas for a clock); `ERR` without `K` unless a frame is shown |
+
+- Numbers are decimal. The caption is the rest of the line after one space, up
+  to 21 characters (5x7 font, ASCII 32..122), drawn centred on rows 57..63
+  after clearing rows 56..63. With a caption `!M` moves the eyes up 5 px.
+  Repeating `!M` with the same mood, overlay and caption presence does not
+  restart the face (blinks keep their rhythm); only the caption text changes.
+- `!F`/`!X`: the board answers `K` only when it is ready to read (it is
+  not pushing a frame to the panel), so the 64-byte serial buffer never
+  overflows. A gap over 200 ms inside the payload, a corrupt stream or a
+  wrong length answers `ERR` and shows the flashed face (the half-written
+  frame is not shown). A frame is pushed to the panel once; it stays until the
+  next command or the timeout.
+- Every `OK` restarts the 30 s timeout. The app re-sends its screen (or `!P`)
+  at least every 10 s.
+- The panel's invert and rotate180 from the flashed face also apply to live
+  screens (they describe the mounting), and so does its contrast.
+
+**Clawd** (`db_clawd_render`, in the engine so the simulator matches): a
+crab mascot drawn above row 55, stateless in time (32 ms ticks, power-of-two
+periods). Animations: `0 idle` (bob), `1 walk` (across the screen and back,
+8.2 s), `2 jump` (hop every 1.02 s, arms up, sparkles), `3 shake` (jitter,
+question mark overhead), `4 sleep` (legs tucked, eyes shut, zzz), `5 work`
+(arms tapping, eyes down). Expressions: `0 open`, `1 happy` (^ ^), `2 closed`,
+`3 wide`, `4 squint` (> <), `5 dead` (x x), `6 worried`, `7 focus` (glancing).
+Open, wide, worried and focus blink every 4.1 s; sleep forces closed. Unknown
+values draw as idle/open. `engine/build/render clawd out.pbm` draws a sheet.
+
+Flash: the live link costs ~0.9 KB and Clawd ~1.6 KB, taken from the
+drawing slot (table above). The 32u4 image leaves Clawd out.
+`firmware/tools/livelink.py` drives a board from the command line.
 
 ## Engine API
 
@@ -184,6 +242,8 @@ result is the same pixels.
 - Loop: render at ~30 fps into a 1024-byte framebuffer, composite the drawing
   (Drawing blob v1), push all 8 pages. Frames are read straight from flash
   (PROGMEM on AVR): the drawing costs no RAM.
+- Live link: see "Live link v1". The loop renders the live screen instead of
+  the face while it is active.
 - Serial 115200: on boot prints `DESKBUNNY <fw_version> <board_id> <face name>`.
   Replies the same line to `?\n` (`?\r\n` also works). The app uses this to
   verify a flash. Boards sharing an image can't tell themselves apart, so
@@ -282,6 +342,128 @@ Commands:
   parses, clamps and validates; `null` if cancelled; rejects bad files with a
   readable error. Both dialogs run in Rust (`tauri-plugin-dialog`); the webview
   has no dialog or filesystem permissions.
+
+Live mode (see "Live link v1"; `app/src-tauri/src/live.rs`). A worker thread
+owns the port while live mode is on; `flash` and `device_info` pause it (it
+sends `!H`, closes the port, and reopens it when they finish).
+- `LiveConfig = { enabled, port: string|null, screens: ScreenCfg[],
+  claudeStyle: "clawd"|"face", claudeHold, notify, weather }`. `ScreenRef = { kind:
+  "face"|"claude"|"design"|"notify", design?: id }`; `ScreenCfg = ScreenRef &
+  { enabled, seconds }` in rotation order: face and claude exactly once, each
+  design at most once, `seconds` 3..600, `notify` never (it is not rotated).
+  Stored as `<app config>/live.json`; missing keys take defaults (off, face
+  20 s, design "clock" 15 s, claude 15 s). The phase-2 kind `"clock"` reads as
+  the design "clock".
+- `live_get_config() -> LiveConfig`, `live_set_config(config) -> LiveConfig`
+  (sanitised, saved, applied at once).
+- `live_status() -> LiveStatus` and `live-status` events on every change:
+  `{ state: "off"|"paused"|"connecting"|"connected"|"error", port, banner,
+  clawd, screen, pinned, message }` (`message` explains `error`; the worker
+  retries every 4 s).
+- `live_pin(screen: ScreenRef|null)`: keep one screen on (null = rotation). Not saved.
+- `live_preview(screen: ScreenRef, tMs) -> ArrayBuffer` (1024 bytes): a design,
+  the Claude screen or a sample notification as the board shows it (Clawd and
+  caption via the engine and the firmware's font table).
+- With live mode on, closing the window hides it; the tray icon's menu shows
+  it again or quits. The window starts hidden (`visible: false`) and is shown
+  at startup unless the app runs with `--hidden` (login autostart), which
+  stays in the tray (shown anyway when there is no tray).
+- `scripts/deskbunny.sh dev|build|start [--hidden]|stop|restart|status|autostart on|off`
+  (Linux): `build` = `tauri build --no-bundle` into `~/.cache/deskbunny/target`;
+  `autostart on` writes `~/.config/autostart/deskbunny.desktop` running the
+  built app with `--hidden`.
+
+Designs (`crates/deskbunny-core/src/layout.rs`, stored in `<app
+data>/designs.json`, seeded with the built-in templates: Clock, Big digital,
+Analog, Weather, Clock + weather, Air quality, Minimal; the panel offers
+built-ins an install does not have yet). `Design = { id, name, elements }`,
+id 1-40 of `a-z0-9-_`, name 1-32 chars, at most 64 elements drawn in order.
+Elements (`type` tag, panel pixels, everything clips):
+- `text { x, y, text, font: "small"|"seg", size, align: "left"|"center"|"right", erase }`:
+  `small` is the 5x7 font at scale 1..4 (plus `°`); `seg` is 7-segment digits
+  `size` px tall (10..60), other characters fall back to the 5x7 font; `x` is
+  the left edge, centre or right edge; `erase` draws black.
+- `rect { x, y, w, h, fill, erase }`, `line { x1, y1, x2, y2, thick 1..4 }`,
+  `bar { x, y, w, h, value, max }` (value/max may hold tokens; 3+ px tall bars
+  get a border), `analog { cx, cy, r, seconds }`, `icon { x, y, icon, size 1..3 }`
+  (16 px grid; names in `ICONS`, or `{WICON}`), `bitmap { x, y, w, h, data }`
+  (base64, `w*h` bits row-major MSB first, at most 128x64).
+- Tokens in text, bar and icon fields: `{HH} {H} {hh} {h} {MM} {SS} {AMPM} {DAY}
+  {DAYNAME} {DD} {D} {MON} {MONTH} {MO} {YYYY} {TEMP} {TMAX} {TMIN} {UNIT} {COND}
+  {HUM} {WIND} {CITY} {WICON} {AQI} {AQICAT} {AQIMAX} {PM25} {PM10} {CLAUDE}` (`TOKENS` in layout.rs); without weather
+  the weather ones read `--`; unknown tokens stay as written.
+- `design_list() -> Design[]`, `design_catalog() -> { templates, tokens:
+  [name, meaning][], icons }`, `design_save(design) -> Design[]` (insert or
+  replace by id, validated), `design_delete(id) -> Design[]`,
+  `design_render(design) -> { frame: number[1024], bounds: [x,y,w,h][] }`
+  (unsaved designs, for the editor; bounds per element for hit testing).
+
+Weather (`weather.rs`): Open-Meteo, no key. `LiveConfig.weather = { place:
+Place|null, units: "metric"|"imperial", aqi: "us"|"eu"|"in" }`, `Place = {
+name, detail, lat, lon }`. Air quality comes from Open-Meteo's air-quality API
+in the same fetch (PM2.5, PM10 and the index); if only that call fails the
+weather still shows and the AQI tokens read `--`. US EPA and European indexes
+are Open-Meteo's own. India's National AQI is computed here the CPCB way:
+PM10, PM2.5, NO2, SO2 averaged over 24 h and CO, O3 over 8 h (hourly data,
+window ending at the current hour, 3/4 of it present), each mapped linearly
+onto the bands 0-50/51-100/101-200/201-300/301-400/401-500 with CPCB's
+breakpoints, the highest sub-index wins; it needs PM2.5 or PM10 and three
+pollutants. The last band's top (no CPCB value) is taken as PM10 600, PM2.5
+380, NO2 800, SO2 2100, CO 50 mg/m³, O3 1000. Categories: GOOD, SATISFACTORY,
+MODERATE, POOR, VERY POOR, SEVERE. `{AQIMAX}` is 300 (US), 100 (EU), 400 (IN).
+Fetched when the place or units change, every 15 min, 2 min after a failure.
+- `weather_search(query) -> Place[]` (geocoding, up to 8; under 2 characters
+  returns none).
+- `weather_now() -> { weather: Weather|null, error, ageSecs }`, `Weather = {
+  city, temp, tmax, tmin, code (WMO), isDay, humidity, wind, unit, windUnit,
+  aqi: number|null, aqiScale: "US"|"EU"|"IN", pm25, pm10 }`.
+
+Local endpoint (`server.rs`): `http://127.0.0.1:47807`, loopback only. Every
+request must carry an `X-DeskBunny` header (any value): browsers cannot send a
+custom header cross-origin without a CORS preflight, which is never answered,
+so web pages cannot post here. JSON replies, `{"ok": true}` or `{"error"}`.
+- `POST /claude`: a Claude Code hook payload, exactly as the hook receives it
+  on stdin (needs `session_id` and `hook_event_name`).
+- `POST /notify`: `{"title", "body"?, "app"?}`, or plain text (first line =
+  title, the rest = body). `tools/deskbunny-notify TITLE [BODY] [APP]` wraps it.
+- `GET /status`: `{ claude: ClaudeView, live: LiveStatus }`.
+
+Claude screen (`claude.rs`). The hooks (installed by `claude_hooks_install`
+into `~/.claude/settings.json`, entries marked by the `X-DeskBunny` header in
+the command, file backed up to `settings.json.deskbunny.bak`) cover
+SessionStart, UserPromptSubmit, PreToolUse, PostToolUse, Notification, Stop and
+SessionEnd. Each session is idle, starting, working (caption from the tool:
+`EDIT main.rs`, `RUN cargo`, `READ x`, `SEARCH p`), needs you (a permission
+prompt; idle reminders are ignored) or done (`DONE 3m12s`). The busiest
+session wins: needs you > done > working > starting > idle. Silent sessions
+are dropped after 30 min.
+- Screen choice, highest first: Claude needs you (if the Claude screen is
+  enabled) > a notification > a pin > Claude takeover (start 3 s, a new prompt
+  5 s, done 20 s, and with `claudeHold` (default on) the whole time any session
+  is working or needs you) > the rotation. The rotation includes the Claude screen only
+  while some session is working, done or needs you.
+- Clawd: idle sleep/closed, starting idle/wide, working work/focus (edit, run,
+  plan) or walk/focus (read, search, web) or idle/focus, needs you
+  shake/worried, done jump/happy during the takeover then idle/happy. Face
+  (boards without Clawd, or `claudeStyle: "face"`): asleep+zzz, excited+
+  sparkles, determined or scan, worried+question, happy+sparkles.
+- App-drawn screens carry a 7x7 badge at the top right: cycling dots while
+  working, a tick when done, `!` when Claude needs you.
+- `claude_view() -> ClaudeView = { state: "idle"|"starting"|"working"|"done"|
+  "needsYou", caption, project, sessions, takeover, active, busy }` (`active`:
+  some session is working, done or needs you; `busy`: working or needs you).
+- `claude_hooks_status() / claude_hooks_install() / claude_hooks_remove() ->
+  { installed, settingsPath, command }`.
+
+Notifications (`LiveConfig.notify = { enabled, desktop, seconds 2..60,
+showBody, ignoreApps }`). From `/notify` and, on Linux with `desktop` on, from
+the desktop: `dbus-monitor` watches `org.freedesktop.Notifications.Notify` on
+the session bus. Up to 5 queue; each shows for `seconds` (app name, title in
+bold, body word-wrapped unless `showBody` is off); an exact repeat of the last
+one is dropped. Made to be read across a desk: a bell and the app name (2x,
+9 characters), a rule, the sender/title (2x, up to two lines of 10). With
+`showBody` (default off) a one-line title is followed by two small lines of
+the message. `live_test_notification()` queues a sample.
 
 Setup guide (first run; see docs/SETUP.md):
 - `setup_status() -> SetupStatus` = `{ os: "linux"|"windows"|"macos", osLabel,

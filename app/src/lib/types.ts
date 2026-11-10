@@ -301,3 +301,145 @@ export interface UpdateProgress {
   downloaded: number;
   total: number | null;
 }
+
+// ---------------------------------------------------------------- live mode
+
+export type ScreenKind = "face" | "claude" | "design" | "notify";
+
+/** A screen: a kind, plus the design id for "design". */
+export interface ScreenRef {
+  kind: ScreenKind;
+  design?: string;
+}
+
+export interface ScreenCfg extends ScreenRef {
+  enabled: boolean;
+  /** Seconds per turn in the rotation, 3..600. */
+  seconds: number;
+}
+
+export interface LiveConfig {
+  enabled: boolean;
+  port: string | null;
+  /** Rotation order: the face and Claude once each, designs at most once each. */
+  screens: ScreenCfg[];
+  claudeStyle: "clawd" | "face";
+  /** Stay on the Claude screen the whole time a session works or needs you. */
+  claudeHold: boolean;
+  notify: NotifyCfg;
+  weather: WeatherCfg;
+}
+
+export interface Place {
+  name: string;
+  /** Region and country. */
+  detail: string;
+  lat: number;
+  lon: number;
+}
+
+export interface WeatherCfg {
+  place: Place | null;
+  units: "metric" | "imperial";
+  /** US EPA (0-500), European (0-100+) or India's CPCB (0-500) air quality index. */
+  aqi: "us" | "eu" | "in";
+}
+
+export interface Weather {
+  city: string;
+  temp: number;
+  tmax: number;
+  tmin: number;
+  code: number;
+  isDay: boolean;
+  humidity: number;
+  wind: number;
+  unit: string;
+  windUnit: string;
+  aqi: number | null;
+  /** "US", "EU" or "IN" */
+  aqiScale: string;
+  pm25: number | null;
+  pm10: number | null;
+}
+
+export interface WeatherNow {
+  weather: Weather | null;
+  error: string | null;
+  ageSecs: number | null;
+}
+
+// ---------------------------------------------------------------- designs
+
+export type Align = "left" | "center" | "right";
+export type DesignFont = "small" | "seg";
+
+export type Element =
+  | { type: "text"; x: number; y: number; text: string; font: DesignFont; size: number; align: Align; erase: boolean }
+  | { type: "rect"; x: number; y: number; w: number; h: number; fill: boolean; erase: boolean }
+  | { type: "line"; x1: number; y1: number; x2: number; y2: number; thick: number }
+  | { type: "bar"; x: number; y: number; w: number; h: number; value: string; max: string }
+  | { type: "analog"; cx: number; cy: number; r: number; seconds: boolean }
+  | { type: "icon"; x: number; y: number; icon: string; size: number }
+  | { type: "bitmap"; x: number; y: number; w: number; h: number; data: string };
+
+export type ElementType = Element["type"];
+
+export interface Design {
+  id: string;
+  name: string;
+  elements: Element[];
+}
+
+export interface DesignCatalog {
+  templates: Design[];
+  /** [token, meaning] */
+  tokens: [string, string][];
+  icons: string[];
+}
+
+export interface DesignRender {
+  frame: number[];
+  /** [x, y, w, h] per element */
+  bounds: [number, number, number, number][];
+}
+
+export interface NotifyCfg {
+  enabled: boolean;
+  /** Also show the desktop's own notifications (Linux). */
+  desktop: boolean;
+  /** Seconds each one stays up, 2..60. */
+  seconds: number;
+  showBody: boolean;
+  ignoreApps: string[];
+}
+
+export interface HooksStatus {
+  installed: boolean;
+  settingsPath: string;
+  command: string;
+}
+
+export type ClaudeState = "idle" | "starting" | "working" | "done" | "needsYou";
+
+export interface ClaudeView {
+  state: ClaudeState;
+  caption: string;
+  project: string;
+  sessions: number;
+  takeover: boolean;
+  active: boolean;
+}
+
+export type LiveState = "off" | "paused" | "connecting" | "connected" | "error";
+
+export interface LiveStatus {
+  state: LiveState;
+  port: string | null;
+  banner: string | null;
+  /** The board draws Clawd itself; otherwise the Claude screen uses the face. */
+  clawd: boolean;
+  screen: ScreenRef | null;
+  pinned: ScreenRef | null;
+  message: string | null;
+}

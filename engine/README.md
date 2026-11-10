@@ -27,6 +27,7 @@ cc -std=c99 -g -fsanitize=address,undefined -o build/test tests/test_engine.c de
 ```sh
 build/render <face> <t_start_ms> <t_end_ms> <step_ms> <outdir>   # frame_NNNNN.pbm + strip.pbm
 build/render sheet <out.pbm> [t_ms ...]                            # contact sheet of all moods
+build/render clawd <out.pbm> [t_ms ...]                            # Clawd: every animation and expression
 build/render blob <face> <out.bin>                                 # encode a 64-byte blob
 build/render blobhdr > ../firmware/deskbunny/db_default_blob.h     # regenerate the default blob
 python3 tools/pbm2png.py in.pbm out.png [scale]                    # stdlib-only PNG conversion
