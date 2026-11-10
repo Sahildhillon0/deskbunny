@@ -4,13 +4,14 @@
 //! - [`ports`]: serial port discovery and board guessing.
 //! - [`boards`]: the board table (`firmware/boards.json` shape) and MCU facts.
 //! - Protocol backends behind [`Uploader`]: [`stk500v1`], [`stk500v2`], [`avr109`],
-//!   [`samba`], [`dfu`].
+//!   [`samba`], [`dfu`], [`esptool`] (ESP32 family, via the `espflash` crate).
 //!
 //! Contract: docs/ARCHITECTURE.md.
 
 pub mod avr109;
 pub mod boards;
 pub mod dfu;
+pub mod esptool;
 pub mod image;
 pub mod link;
 pub mod ports;
@@ -90,6 +91,11 @@ pub struct Report {
     pub verified: bool,
     pub duration_ms: u64,
     pub warnings: Vec<String>,
+    /// Board whose image was actually written, when the backend chose a different
+    /// one than requested (ESP32 chip auto-switch). Not serialised: the app reports
+    /// it as `FlashReport.boardId`.
+    #[serde(skip)]
+    pub flashed_board: Option<String>,
 }
 
 /// A protocol backend.
@@ -110,6 +116,7 @@ pub fn uploader_for(board: &Board, host: Arc<dyn SerialHost>) -> Box<dyn Uploade
         Protocol::Avr109 => Box::new(avr109::Avr109::new(board.clone(), host)),
         Protocol::Samba => Box::new(samba::Samba::new(board.clone(), host)),
         Protocol::Dfu => Box::new(dfu::Dfu::new(board.clone(), host)),
+        Protocol::Esptool => Box::new(esptool::Esptool::new(board.clone(), host)),
     }
 }
 
@@ -119,14 +126,22 @@ pub(crate) struct Prog<'a> {
     cb: &'a dyn Fn(Progress),
     started: Instant,
     last: Cell<u8>,
+    ranges: fn(Stage) -> (u8, u8),
 }
 
 impl<'a> Prog<'a> {
     pub(crate) fn new(cb: &'a dyn Fn(Progress)) -> Self {
+        Prog::with_ranges(cb, Self::range)
+    }
+
+    /// Same bar with protocol-specific stage weights (each range within 0..=100,
+    /// ranges in stage order).
+    pub(crate) fn with_ranges(cb: &'a dyn Fn(Progress), ranges: fn(Stage) -> (u8, u8)) -> Self {
         Prog {
             cb,
             started: Instant::now(),
             last: Cell::new(0),
+            ranges,
         }
     }
 
@@ -142,7 +157,7 @@ impl<'a> Prog<'a> {
     }
 
     pub(crate) fn emit(&self, stage: Stage, frac: f32, message: impl Into<String>) {
-        let (lo, hi) = Self::range(stage);
+        let (lo, hi) = (self.ranges)(stage);
         let pct = (lo as f32 + (hi - lo) as f32 * frac.clamp(0.0, 1.0)).round() as u8;
         let pct = pct.max(self.last.get());
         self.last.set(pct);

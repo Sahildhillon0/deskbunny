@@ -61,6 +61,9 @@ const BOARDS: Board[] = [
   { id: "micro", name: "Micro", mcu: "atmega32u4", protocol: "avr109", artCapacity: 4032 },
   { id: "uno_r4_minima", name: "Uno R4 Minima", mcu: "RA4M1", protocol: "dfu", artCapacity: 61440 },
   { id: "uno_r4_wifi", name: "Uno R4 WiFi", mcu: "RA4M1", protocol: "samba", artCapacity: 61440 },
+  { id: "esp32", name: "ESP32", mcu: "esp32", protocol: "esptool" },
+  { id: "esp32c3", name: "ESP32-C3", mcu: "esp32c3", protocol: "esptool" },
+  { id: "esp32s3", name: "ESP32-S3", mcu: "esp32s3", protocol: "esptool" },
 ];
 
 export async function listBoards(): Promise<Board[]> {
@@ -74,7 +77,15 @@ export async function listPorts(): Promise<Port[]> {
   return [
     { path: "/dev/ttyUSB0", vid: "1A86", pid: "7523", product: "USB Serial (CH340)", guessedBoard: "nano" },
     { path: "/dev/ttyACM0", vid: "2341", pid: "0043", product: "Arduino Uno", serialNumber: "85736323838351F0E1C1", guessedBoard: "uno" },
+    // VID:PID guesses C3; detectChip() finds the S3 on it.
+    { path: "/dev/ttyACM1", vid: "303A", pid: "1001", product: "USB JTAG/serial debug unit", guessedBoard: "esp32c3" },
   ];
+}
+
+/** Mock ROM-bootloader probe: the 303A:1001 port holds an ESP32-S3. */
+export async function detectChip(port: string): Promise<string | null> {
+  await delay(700);
+  return port === "/dev/ttyACM1" ? "esp32s3" : null;
 }
 
 // ---------------------------------------------------------------- flash
@@ -100,6 +111,9 @@ const IMAGE_STEM: Record<string, string> = {
   micro: "atmega32u4",
   uno_r4_minima: "ra4m1_minima",
   uno_r4_wifi: "ra4m1_wifi",
+  esp32: "esp32",
+  esp32c3: "esp32c3",
+  esp32s3: "esp32s3",
 };
 
 let flashing = false;
@@ -129,6 +143,7 @@ export async function flash(port: string, boardId: string, face: FaceDef): Promi
       await delay(90);
     }
     emit({ stage: "done", percent: 100, message: "Done" });
+    if (BOARDS.find((b) => b.id === boardId)?.protocol === "esptool") return espReport(port, boardId, started);
     const name = sanitizeName(face.name);
     const banner = !location.search.includes("nobanner");
     const deviceInfo = banner ? `DESKBUNNY 0.1.0 ${IMAGE_STEM[boardId] ?? boardId} ${name}` : null;
@@ -151,6 +166,36 @@ export async function flash(port: string, boardId: string, face: FaceDef): Promi
   } finally {
     flashing = false;
   }
+}
+
+// ESP32 boards: the face is ignored and the merged image is written at 0x0.
+function espReport(port: string, boardId: string, started: number): FlashReport {
+  const flashed = port === "/dev/ttyACM1" ? "esp32s3" : boardId;
+  const name = BOARDS.find((b) => b.id === flashed)?.name ?? flashed;
+  const banner = !location.search.includes("nobanner");
+  const deviceInfo = banner ? `DESKBUNNY 0.2.0 ${flashed} NEUTRAL` : null;
+  const warnings: string[] = [];
+  if (flashed !== boardId) {
+    const selected = BOARDS.find((b) => b.id === boardId)?.name ?? boardId;
+    warnings.push(`Selected ${selected} but found ${name}; flashed the ${name.replace("ESP32-", "")} image.`);
+  }
+  if (!banner) warnings.push("The board did not report a nixxa banner after flashing. The upload was verified; if the screen stays dark, check the OLED wiring (SDA/SCL).");
+  return {
+    protocol: "esptool",
+    port,
+    baud: 460800,
+    signature: `${name} 34:85:18:AA:BB:CC`,
+    bytesWritten: 1_179_648,
+    verified: true,
+    durationMs: Math.round(performance.now() - started),
+    warnings,
+    boardId: flashed,
+    faceName: "",
+    fwVersion: "0.2.0",
+    blobAddress: 0,
+    deviceInfo,
+    deviceVerified: !!deviceInfo,
+  };
 }
 
 export async function deviceInfo(port: string): Promise<string | null> {

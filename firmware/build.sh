@@ -6,8 +6,10 @@
 # Needs arduino-cli and python3 on PATH (Linux, macOS, Git Bash on Windows).
 # Installs the pinned Arduino cores if missing. Overrides:
 #   ARDUINO_CLI=/path/to/arduino-cli
-#   AVR_CORE_VERSION=1.8.6  RENESAS_CORE_VERSION=1.2.0
-# Contract: docs/ARCHITECTURE.md ("Boards").
+#   AVR_CORE_VERSION=1.8.6  RENESAS_CORE_VERSION=1.2.0  ESP32_CORE_VERSION=3.3.12
+# Arduino boards build firmware/deskbunny; ESP32 boards (protocol "esptool")
+# build firmware/nixxa_esp32 into a merged image flashed at 0x0.
+# Contract: docs/ARCHITECTURE.md ("Boards", "ESP32 + BLE (nixxa)").
 set -euo pipefail
 
 FW_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -16,6 +18,10 @@ DIST="$FW_DIR/dist"
 CLI="${ARDUINO_CLI:-arduino-cli}"
 AVR_CORE_VERSION="${AVR_CORE_VERSION:-1.8.6}"
 RENESAS_CORE_VERSION="${RENESAS_CORE_VERSION:-1.2.0}"
+ESP32_CORE_VERSION="${ESP32_CORE_VERSION:-3.3.12}"
+ESP32_INDEX_URL="https://espressif.github.io/arduino-esp32/package_esp32_index.json"
+# Every arduino-cli call below sees the esp32 board manager index.
+export ARDUINO_BOARD_MANAGER_ADDITIONAL_URLS="$ESP32_INDEX_URL"
 
 # ATmega328P limits (32 KB flash with a 2 KB bootloader slot, 2 KB RAM).
 MAX_FLASH_328P=30720
@@ -56,6 +62,7 @@ ensure_core() { # <core> <version>
 }
 ensure_core arduino:avr "$AVR_CORE_VERSION"
 ensure_core arduino:renesas_uno "$RENESAS_CORE_VERSION"
+ensure_core esp32:esp32 "$ESP32_CORE_VERSION"
 
 # --- sketch copy (engine sources are copied, never symlinked) ----------------
 TMP="$(mktemp -d 2>/dev/null || mktemp -d -t deskbunny)"
@@ -65,23 +72,50 @@ mkdir -p "$SKETCH"
 cp "$FW_DIR"/deskbunny/*.ino "$FW_DIR"/deskbunny/*.h "$SKETCH"/
 cp "$ROOT/engine/deskbunny_engine.c" "$ROOT/engine/deskbunny_engine.h" "$SKETCH"/
 
+# nixxa (ESP32): sketch root files only (tests/ stays out), the engine, and the
+# release version so every image reports the same fwVersion.
+NX_SKETCH="$TMP/nixxa_esp32"
+mkdir -p "$NX_SKETCH"
+cp "$FW_DIR"/nixxa_esp32/*.ino "$FW_DIR"/nixxa_esp32/*.h "$FW_DIR"/nixxa_esp32/*.c "$FW_DIR"/nixxa_esp32/*.cpp "$NX_SKETCH"/
+cp "$ROOT/engine/deskbunny_engine.c" "$ROOT/engine/deskbunny_engine.h" "$NX_SKETCH"/
+printf '#pragma once\n#define NX_FW_VERSION "%s"\n' "$FW_VERSION" > "$NX_SKETCH/nx_version.h"
+
 rm -rf "$DIST"
 mkdir -p "$DIST"
 
 # --- one compile per distinct image ----------------------------------------
 SUMMARY=""
-while IFS=$'\t' read -r image fqbn stem; do
+while IFS=$'\t' read -r image fqbn stem sketch; do
   [ -n "$image" ] || continue
   echo
   echo "== $image ($fqbn)"
   out="$TMP/out-$stem"
   log="$TMP/log-$stem.txt"
+  src_dir="$SKETCH"
+  [ "$sketch" = "nixxa_esp32" ] && src_dir="$NX_SKETCH"
   "$CLI" compile \
     --fqbn "$fqbn" \
     --warnings default \
     --build-property "compiler.cpp.extra_flags=-DDB_BOARD_ID=$stem" \
     --output-dir "$(native_path "$out")" \
-    "$(native_path "$SKETCH")" 2>&1 | tee "$log"
+    "$(native_path "$src_dir")" 2>&1 | tee "$log"
+
+  if [ "$sketch" = "nixxa_esp32" ]; then
+    # Merged image (bootloader, partition table, boot_app0, app) cut after the
+    # app; fwtool checks NVS is erased and the app fits app0.
+    merged="$out/nixxa_esp32.ino.merged.bin"
+    [ -f "$merged" ] || die "compiler output $merged missing"
+    sizes="$("$PY" "$FWTOOL" espimage "$(native_path "$merged")" "$(native_path "$out/nixxa_esp32.ino.bin")" \
+      "$(native_path "$DIST/$image")" | tr -d '\r')"
+    app="${sizes%% *}"
+    app0="${sizes##* }"
+    ram="$(sed -n 's/.*Global variables use \([0-9]*\) bytes.*/\1/p' "$log" | tail -n 1)"
+    line="$(printf '%-20s app %7s B of %7s B (%3s%%, %6s B free)  globals %6s B  image %7s B @ 0x0' \
+      "$image" "$app" "$app0" "$((app * 100 / app0))" "$((app0 - app))" "${ram:-?}" \
+      "$(wc -c < "$DIST/$image" | tr -d ' ')")"
+    SUMMARY="$SUMMARY$line"$'\n'
+    continue
+  fi
 
   case "$image" in
     *.hex) src="$out/deskbunny.ino.hex" ;;

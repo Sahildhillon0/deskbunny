@@ -184,6 +184,11 @@
 </header>
 
 <div class="scroll">
+  {#if app.espBoard}
+    <p class="esp-note" role="note">
+      Preview only. On ESP32 boards, faces are sent from the nixxa phone app.
+    </p>
+  {/if}
   <section>
     <h2 class="label" id="drawing-label">Drawing</h2>
     {#if f.drawing}
@@ -468,6 +473,15 @@
     margin: 12px 0 8px;
     font-size: 12px;
     color: var(--text-3);
+  }
+
+  .esp-note {
+    margin: 12px 0 0;
+    padding: 8px 10px;
+    border: 1px solid var(--line);
+    border-radius: var(--r-sm);
+    font-size: 12px;
+    color: var(--text-2);
   }
 
   .hint.first {

@@ -163,6 +163,7 @@ impl Stk500v1 {
         )?;
         Ok(Report {
             protocol: "stk500v1".into(),
+            flashed_board: None,
             port: port.to_string(),
             baud: Some(baud),
             signature: Some(hex_bytes(&sig)),

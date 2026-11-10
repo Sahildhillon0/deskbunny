@@ -233,6 +233,10 @@ SUBSYSTEM=="usb", ATTR{idVendor}=="2341", TAG+="uaccess", MODE="0660"
 # Common Nano clones: CH340 and FTDI
 SUBSYSTEMS=="usb", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="7523", TAG+="uaccess", ENV{ID_MM_DEVICE_IGNORE}="1"
 SUBSYSTEMS=="usb", ATTRS{idVendor}=="0403", ATTRS{idProduct}=="6001", TAG+="uaccess", ENV{ID_MM_DEVICE_IGNORE}="1"
+# ESP32 boards (nixxa): CP210x, CH9102, ESP32-C3/S3 USB-Serial/JTAG
+SUBSYSTEMS=="usb", ATTRS{idVendor}=="10c4", ATTRS{idProduct}=="ea60", TAG+="uaccess", ENV{ID_MM_DEVICE_IGNORE}="1"
+SUBSYSTEMS=="usb", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="55d4", TAG+="uaccess", ENV{ID_MM_DEVICE_IGNORE}="1"
+SUBSYSTEMS=="usb", ATTRS{idVendor}=="303a", ATTRS{idProduct}=="1001", TAG+="uaccess", ENV{ID_MM_DEVICE_IGNORE}="1"
 "#;
 
     const RULE_DIRS: &[&str] = &[
@@ -259,24 +263,32 @@ SUBSYSTEMS=="usb", ATTRS{idVendor}=="0403", ATTRS{idProduct}=="6001", TAG+="uacc
     /// True if a rules file grants user access to Arduino (2341) devices: ours,
     /// Arduino IDE's 60-arduino-renesas.rules, or a distro/user equivalent.
     pub(super) fn rules_grant_arduino(text: &str) -> bool {
+        rules_grant_vendor(text, "2341")
+    }
+
+    /// True if a non-comment rule line names `vid` and grants user access.
+    pub(super) fn rules_grant_vendor(text: &str, vid: &str) -> bool {
         text.lines()
             .map(str::trim)
             .filter(|l| !l.starts_with('#'))
             .any(|l| {
-                l.contains("2341")
+                l.contains(vid)
                     && (l.contains("uaccess") || l.contains("0666") || l.contains("plugdev"))
             })
     }
 
+    /// Arduino (2341) access plus ESP32-C3/S3 USB-Serial/JTAG (303a) access.
+    /// Machines with a rule from before the ESP32 entries are asked to
+    /// reinstall it.
     fn usb_access_installed() -> bool {
-        RULE_DIRS.iter().any(|dir| {
-            std::fs::read_dir(dir)
-                .into_iter()
-                .flatten()
-                .flatten()
-                .filter(|e| e.path().extension().is_some_and(|x| x == "rules"))
-                .any(|e| std::fs::read_to_string(e.path()).is_ok_and(|t| rules_grant_arduino(&t)))
-        })
+        let texts: Vec<String> = RULE_DIRS
+            .iter()
+            .flat_map(|dir| std::fs::read_dir(dir).into_iter().flatten().flatten())
+            .filter(|e| e.path().extension().is_some_and(|x| x == "rules"))
+            .filter_map(|e| std::fs::read_to_string(e.path()).ok())
+            .collect();
+        texts.iter().any(|t| rules_grant_arduino(t))
+            && texts.iter().any(|t| rules_grant_vendor(t, "303a"))
     }
 
     /// brltty (Ubuntu/Debian default) claims CH340 adapters as braille displays.
@@ -764,6 +776,11 @@ mod tests {
         ));
         assert!(!rules_grant_arduino(
             r#"SUBSYSTEMS=="usb", ATTRS{idVendor}=="1a86", TAG+="uaccess""#
+        ));
+        assert!(rules_grant_vendor(RULE, "303a"));
+        assert!(!rules_grant_vendor(
+            r#"SUBSYSTEMS=="usb", ATTRS{idVendor}=="2341", TAG+="uaccess""#,
+            "303a"
         ));
         assert_eq!(
             pretty_name("NAME=\"Arch\"\nPRETTY_NAME=\"Arch Linux\"\n").as_deref(),

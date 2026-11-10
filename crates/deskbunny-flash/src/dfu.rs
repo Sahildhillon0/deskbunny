@@ -313,6 +313,7 @@ impl Uploader for Dfu {
         prog.emit(Stage::Done, 1.0, "Upload complete");
         Ok(Report {
             protocol: "dfu".into(),
+            flashed_board: None,
             port: format!("USB {:04X}:{:04X}", boot[0].0, boot[0].1),
             baud: None,
             signature: None,

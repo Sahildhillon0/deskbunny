@@ -2,14 +2,22 @@
 """Helpers for firmware/build.sh (python3 stdlib only).
 
   fwtool.py images <boards.json>
-      one line per distinct image: "<image>\t<fqbn>\t<stem>" (first board wins)
+      one line per distinct image: "<image>\t<fqbn>\t<stem>\t<sketch>" (first
+      board wins); sketch is "nixxa_esp32" for esptool boards, else "deskbunny"
+  fwtool.py espimage <merged.bin> <app.bin> <out.bin>
+      ESP32 image: the arduino-cli merged image cut after the app (the core pads
+      it to the whole flash, which would wipe app1 and the LittleFS library).
+      Checks that NVS (0x9000..0xDFFF) is all 0xFF, that the app at 0x10000 is
+      the app binary byte for byte and that it fits app0; prints
+      "<app bytes> <app0 bytes>".
   fwtool.py locate <image.hex|image.bin> [face|art]
       prints the face (default) or drawing blob offset; exits 1 unless its
       magic occurs exactly once.
       .hex: absolute address in the HEX address space (= flash address on AVR)
       .bin: byte offset in the file
   fwtool.py manifest <boards.json> <distdir> <fwVersion>
-      writes <distdir>/manifest.json (see docs/ARCHITECTURE.md)
+      writes <distdir>/manifest.json (see docs/ARCHITECTURE.md). Images of
+      esptool boards carry chip/flashOffset and no blob offsets.
 """
 import hashlib
 import json
@@ -18,6 +26,11 @@ import sys
 
 # art: the size is the slot's own capacity, read from header bytes 14..15.
 BLOBS = {"face": (b"DBFACE01", 64), "art": (b"DBART001", None)}
+
+# ESP32 images: the core's "default" 4 MB partition table.
+ESP_NVS = (0x9000, 0xE000)   # nvs 0x9000/0x5000 (+ the gap up to otadata)
+ESP_APP0 = (0x10000, 0x140000)  # offset, size
+ESP_SKETCH = "nixxa_esp32"
 
 
 def die(msg):
@@ -117,21 +130,61 @@ def distinct_images(boards):
     return seen
 
 
+def is_esp(board):
+    return board.get("protocol") == "esptool"
+
+
 def cmd_images(boards_path):
     for image, b in distinct_images(load_boards(boards_path)).items():
         stem = os.path.splitext(image)[0]
-        print("%s\t%s\t%s" % (image, b["fqbn"], stem))
+        sketch = ESP_SKETCH if is_esp(b) else "deskbunny"
+        print("%s\t%s\t%s\t%s" % (image, b["fqbn"], stem, sketch))
+
+
+def cmd_espimage(merged_path, app_path, out_path):
+    with open(merged_path, "rb") as fh:
+        merged = fh.read()
+    with open(app_path, "rb") as fh:
+        app = fh.read()
+    off, size = ESP_APP0
+    if not app or app[0] != 0xE9:
+        die("%s: not an ESP app image" % app_path)
+    if len(app) > size:
+        die("%s: app is %d bytes, app0 holds %d" % (app_path, len(app), size))
+    end = off + len(app)
+    if len(merged) < end or merged[off:end] != app:
+        die("%s: app at 0x%x differs from %s" % (merged_path, off, app_path))
+    lo, hi = ESP_NVS
+    if merged[lo:hi] != b"\xff" * (hi - lo):
+        die("%s: 0x%x..0x%x is not erased (a flash would keep the pairing)" % (merged_path, lo, hi - 1))
+    if merged[end:].strip(b"\xff"):
+        die("%s: data after the app at 0x%x" % (merged_path, end))
+    with open(out_path, "wb") as fh:
+        fh.write(merged[:end])
+    print("%d %d" % (len(app), size))
 
 
 def cmd_manifest(boards_path, distdir, version):
     boards = load_boards(boards_path)
     images = []
-    for image in distinct_images(boards):
+    for image, board in distinct_images(boards).items():
         path = os.path.join(distdir, image)
         if not os.path.exists(path):
             die("missing image %s" % path)
         with open(path, "rb") as fh:
             sha = hashlib.sha256(fh.read()).hexdigest()
+        if is_esp(board):
+            # Never patched: no blob slots, so no magic-occurs-once check.
+            images.append({
+                "file": image,
+                "format": "bin",
+                "sha256": sha,
+                "chip": board["mcu"],
+                "flashOffset": 0,
+                "blobOffset": None,
+                "artOffset": None,
+            })
+            continue
         images.append({
             "file": image,
             "format": "hex" if image.endswith(".hex") else "bin",
@@ -151,6 +204,8 @@ def main(argv):
         cmd_images(argv[2])
     elif len(argv) in (3, 4) and argv[1] == "locate" and (len(argv) == 3 or argv[3] in BLOBS):
         print(locate(argv[2], *argv[3:]))
+    elif len(argv) == 5 and argv[1] == "espimage":
+        cmd_espimage(argv[2], argv[3], argv[4])
     elif len(argv) == 5 and argv[1] == "manifest":
         cmd_manifest(argv[2], argv[3], argv[4])
     else:

@@ -224,6 +224,7 @@ impl Uploader for Avr109 {
         prog.emit(Stage::Done, 1.0, "Upload complete");
         Ok(Report {
             protocol: "avr109".into(),
+            flashed_board: None,
             port: boot_port,
             baud: Some(baud),
             signature: Some(hex_bytes(&sig)),

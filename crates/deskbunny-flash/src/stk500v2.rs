@@ -284,6 +284,7 @@ impl Stk500v2 {
         s.command(&[CMD_LEAVE_PROGMODE_ISP, 1, 1], "leave programming mode")?;
         Ok(Report {
             protocol: "stk500v2".into(),
+            flashed_board: None,
             port: port.to_string(),
             baud: Some(baud),
             signature: Some(hex_bytes(&sig)),

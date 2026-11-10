@@ -108,10 +108,14 @@ export interface FaceDef {
   drawing?: Drawing;
 }
 
+/** Protocol of the ESP32 family (nixxa firmware; faces come from the phone app). */
+export const ESP_PROTOCOL = "esptool";
+
 export interface Board {
   id: string;
   name: string;
   mcu: string;
+  /** "stk500v1" | "stk500v2" | "avr109" | "dfu" | "samba" | "esptool" */
   protocol: string;
   /** Bytes the board's drawing slot holds (header included); absent when unknown. */
   artCapacity?: number;
@@ -142,7 +146,7 @@ export interface FlashReport {
   baud: number | null;
   signature: string | null;
   bytesWritten: number;
-  /** Flash read back and compared (false for DFU). */
+  /** Flash read back and compared (false for DFU; ESP32: flash MD5 matched). */
   verified: boolean;
   durationMs: number;
   warnings: string[];
@@ -152,7 +156,7 @@ export interface FlashReport {
   blobAddress: number;
   /** The `DESKBUNNY ...` line read after the upload. */
   deviceInfo: string | null;
-  /** deviceInfo ends with faceName. */
+  /** deviceInfo ends with faceName (ESP32: deviceInfo reports boardId; faceName is ""). */
   deviceVerified: boolean;
 }
 

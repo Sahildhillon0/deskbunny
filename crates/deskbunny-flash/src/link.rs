@@ -101,7 +101,7 @@ fn is_wch_port(path: &str) -> bool {
         })
 }
 
-fn open_error(path: &str, e: serialport::Error) -> FlashError {
+pub(crate) fn open_error(path: &str, e: serialport::Error) -> FlashError {
     let detail = e.to_string();
     // WCH's Windows driver 3.8+ fails every open on many clone CH340 chips with
     // ERROR_GEN_FAILURE (31), which serialport reports as Io(Other); missing and
@@ -276,13 +276,22 @@ pub fn query_device_info(
     total: Duration,
 ) -> Result<Option<String>> {
     let mut link = host.open(port, 115200, Duration::from_millis(100))?;
+    query_on_link(host, link.as_mut(), total)
+}
+
+/// [`query_device_info`] on a link that is already open at 115200 baud.
+pub(crate) fn query_on_link(
+    host: &dyn SerialHost,
+    link: &mut dyn SerialLink,
+    total: Duration,
+) -> Result<Option<String>> {
     let start = Instant::now();
     let mut line = Vec::new();
     let mut last_ask: Option<Instant> = None;
     let mut buf = [0u8; 64];
     while start.elapsed() < total {
         if last_ask.is_none_or(|t| t.elapsed() >= Duration::from_millis(400)) {
-            write_all(link.as_mut(), b"?\n")?;
+            write_all(link, b"?\n")?;
             last_ask = Some(Instant::now());
         }
         match link.read(&mut buf) {

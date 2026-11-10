@@ -13,11 +13,13 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use deskbunny_core::{presets, Engine, FaceDef};
-use deskbunny_flash::boards::{Board, UsbRole};
+use deskbunny_flash::boards::{Board, Protocol, UsbRole};
+use deskbunny_flash::esptool::{self, Esptool};
 use deskbunny_flash::link::query_device_info;
 use deskbunny_flash::ports::guess_board;
 use deskbunny_flash::{
-    art_capacity, patch_art, patch_face, uploader_for, Report, SerialHost, SystemHost,
+    art_capacity, patch_art, patch_face, uploader_for, FlashError, Report, SerialHost, SystemHost,
+    Uploader,
 };
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -232,6 +234,10 @@ async fn flash(
 ) -> CmdResult<FlashReport> {
     let fw = firmware::load(&app)?;
     let board = fw.board(&board_id)?;
+    if esptool::is_esp_board(&board) {
+        // ESP32 images carry no face slot: faces are sent from the phone app.
+        return flash_esp(app, fw, board, port).await;
+    }
     let (mut image, entry) = fw.image(&board)?;
     let face = face.sanitized();
     let blob_address = patch_face(&mut image, &face.encode()).map_err(|e| e.to_string())?;
@@ -245,11 +251,11 @@ async fn flash(
     }
     let mut warnings = Vec::new();
     // manifest blobOffset: HEX address for .hex, file offset for .bin.
-    let expected = match entry.format.as_str() {
-        "bin" => board.bin_base() + entry.blob_offset,
-        _ => entry.blob_offset,
-    };
-    if blob_address != expected {
+    let expected = entry.blob_offset.map(|off| match entry.format.as_str() {
+        "bin" => board.bin_base() + off,
+        _ => off,
+    });
+    if let Some(expected) = expected.filter(|e| *e != blob_address) {
         warnings.push(format!(
             "Face slot found at 0x{blob_address:X}, manifest says 0x{expected:X}."
         ));
@@ -325,6 +331,127 @@ async fn flash(
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+/// Flash the nixxa firmware onto an ESP32-family board (docs/ARCHITECTURE.md,
+/// "Desktop flashing"). The face is ignored; the image is never patched.
+async fn flash_esp(
+    app: AppHandle,
+    fw: firmware::Firmware,
+    board: Board,
+    port: String,
+) -> CmdResult<FlashReport> {
+    let (image, _entry) = fw.image(&board)?;
+    let fw_version = fw.manifest.fw_version.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let flash_lock = app.state::<FlashLock>();
+        let _guard = flash_lock
+            .0
+            .try_lock()
+            .map_err(|_| "Another upload is already running.".to_string())?;
+        let host: Arc<dyn SerialHost> = Arc::new(SystemHost);
+        // Chip auto-switch: load another ESP32 board's image on demand.
+        let fw2 = fw.clone();
+        let uploader = Esptool::new(board.clone(), host).with_resolver(Box::new(move |id| {
+            let b = fw2.board(id).map_err(FlashError::Image)?;
+            fw2.image(&b).map(|(img, _)| img).map_err(FlashError::Image)
+        }));
+        let emit = |p: deskbunny_flash::Progress| {
+            let _ = app.emit("flash-progress", p);
+        };
+        log::info!(
+            "flash: {} ({}) on {port}, protocol esptool, nixxa firmware {fw_version}, DeskBunny {} on {} {}",
+            board.name,
+            board.id,
+            app.package_info().version,
+            std::env::consts::OS,
+            std::env::consts::ARCH
+        );
+        let mut upload = uploader.upload(&port, &image, &emit).map_err(|e| {
+            log::error!("flash failed: {e}");
+            e.to_string()
+        })?;
+        let board_id = upload.flashed_board.clone().unwrap_or_else(|| board.id.clone());
+        log::info!(
+            "upload done: {} bytes in {} ms via {} ({board_id})",
+            upload.bytes_written,
+            upload.duration_ms,
+            upload.port
+        );
+        let device_info = uploader.banner(&port).unwrap_or_else(|e| {
+            upload
+                .warnings
+                .push(format!("Could not read the device banner: {e}"));
+            None
+        });
+        log::info!("device banner after flashing: {device_info:?}");
+        // ESP32 banners carry the board id; there is no flashed face to compare.
+        let device_verified = device_info
+            .as_deref()
+            .and_then(banner_board_id)
+            .is_some_and(|id| id == board_id);
+        if device_info.is_none() {
+            upload.warnings.push(
+                "The board did not report a nixxa banner after flashing. The upload was verified; if the screen stays dark, check the OLED wiring (SDA/SCL).".into(),
+            );
+        } else if !device_verified {
+            upload
+                .warnings
+                .push("The board is running nixxa but reported a different board type.".into());
+        }
+        Ok(FlashReport {
+            upload,
+            board_id,
+            face_name: String::new(),
+            fw_version,
+            blob_address: 0,
+            device_info,
+            device_verified,
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Enter the ESP32 ROM bootloader on `port`, report the chip as a board id and
+/// reset back into the app. Only ports whose USB ID belongs to an ESP32 board are
+/// touched; anything else is `None` without opening the port.
+#[tauri::command]
+async fn detect_chip(app: AppHandle, port: String) -> CmdResult<Option<String>> {
+    let esp_ids: Vec<(u16, u16)> = firmware::boards(&app)
+        .iter()
+        .filter(|b| b.protocol == Protocol::Esptool)
+        .flat_map(|b| b.usb.iter().map(|u| (u.vid, u.pid)))
+        .collect();
+    tauri::async_runtime::spawn_blocking(move || {
+        let flash_lock = app.state::<FlashLock>();
+        let _guard = flash_lock
+            .0
+            .try_lock()
+            .map_err(|_| "An upload is running; try again when it has finished.".to_string())?;
+        let ports = deskbunny_flash::list_ports().map_err(|e| e.to_string())?;
+        let is_esp = ports.iter().any(|p| {
+            p.path == port
+                && p.usb
+                    .as_ref()
+                    .is_some_and(|u| esp_ids.contains(&(u.vid, u.pid)))
+        });
+        if !is_esp {
+            log::info!("detect_chip: {port} is not an ESP32 USB port; skipped");
+            return Ok(None);
+        }
+        esptool::detect_chip(&port)
+            .map(|c| c.map(str::to_string))
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Board id from `DESKBUNNY <fw_version> <board_id> ...`.
+fn banner_board_id(line: &str) -> Option<&str> {
+    let rest = line.trim().strip_prefix("DESKBUNNY ")?;
+    rest.split(' ').nth(1).filter(|s| !s.is_empty())
 }
 
 /// Face name from `DESKBUNNY <fw_version> <image_stem> <face name>`; the name is
@@ -429,6 +556,7 @@ pub fn run() {
             sim_drop,
             flash,
             device_info,
+            detect_chip,
             list_saved_faces,
             save_face,
             delete_face,
@@ -450,7 +578,18 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::banner_face_name;
+    use super::{banner_board_id, banner_face_name};
+
+    #[test]
+    fn parses_banner_board_id() {
+        assert_eq!(
+            banner_board_id("DESKBUNNY 0.2.0 esp32c3 NEUTRAL"),
+            Some("esp32c3")
+        );
+        assert_eq!(banner_board_id("DESKBUNNY 0.2.0 esp32"), Some("esp32"));
+        assert_eq!(banner_board_id("DESKBUNNY 0.2.0"), None);
+        assert_eq!(banner_board_id("nope"), None);
+    }
 
     #[test]
     fn parses_banner() {
