@@ -16,8 +16,11 @@ tauri-build = { version = "2", features = [] }
 deskbunny-core.workspace = true
 deskbunny-flash.workspace = true
 serde.workspace = true
-serde_json.workspace = true
-tauri = { version = "2", features = [] }
+serde_json = { workspace = true, features = ["preserve_order"] }
+tiny_http = "0.12"
+ureq = { version = "2", features = ["json"] }
+tauri = { version = "2", features = ["tray-icon"] }
+chrono = { version = "0.4", default-features = false, features = ["clock", "alloc"] }
 sha2 = "0.11"
 tauri-plugin-dialog = "2"
 tauri-plugin-opener = "2"

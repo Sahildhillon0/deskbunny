@@ -21,6 +21,10 @@ class AppState {
   drawOpen = $state(false);
   /** The selected board runs nixxa (ESP32): faces here are a preview only. */
   espBoard = $state(false);
+  /** The live screens dialog is open. */
+  liveOpen = $state(false);
+  /** Design being edited in the designer (a copy), or null when closed. */
+  designing = $state<import("./types").Design | null>(null);
 
   sourceFace = $derived.by(() => {
     const s = this.source;

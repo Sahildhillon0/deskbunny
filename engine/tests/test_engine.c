@@ -444,6 +444,48 @@ static void test_art(void)
   CHECK(db_art_frame(art_rd, 40, &pos, DB_ART_SKIP, fb) == -1);
 }
 
+/* Clawd: deterministic, never touches the caption rows, every expression and
+ * animation looks different, unknown values fall back to IDLE/OPEN. */
+static void test_clawd(void)
+{
+  static uint8_t a[DB_FB_SIZE], b[DB_FB_SIZE];
+  uint32_t t;
+  uint8_t an, ex, i;
+  int ok_det = 1, ok_rows = 1, ok_lit = 1;
+  for (an = 0; an < DB_CLAWD_ANIM_COUNT; an++)
+    for (ex = 0; ex < DB_CLAWD_EXPR_COUNT; ex++)
+      for (t = 0; t < 9000u; t += 37u) {
+        int x, y;
+        db_clawd_render(an, ex, t, a);
+        db_clawd_render(an, ex, t, b);
+        ok_det &= memcmp(a, b, sizeof(a)) == 0;
+        ok_lit &= popcount_fb(a) > 200;
+        for (y = DB_CLAWD_GROUND; y < DB_H; y++)
+          for (x = 0; x < DB_W; x++) ok_rows &= px(a, x, y) == 0;
+      }
+  CHECK(ok_det);
+  CHECK(ok_rows);
+  CHECK(ok_lit);
+  for (ex = 0; ex < DB_CLAWD_EXPR_COUNT; ex++)
+    for (i = (uint8_t)(ex + 1); i < DB_CLAWD_EXPR_COUNT; i++) {
+      if (ex == DB_CLAWD_OPEN && i == DB_CLAWD_FOCUS) continue; /* same eyes until it glances */
+      db_clawd_render(DB_CLAWD_IDLE, ex, 1000u, a);
+      db_clawd_render(DB_CLAWD_IDLE, i, 1000u, b);
+      CHECK(memcmp(a, b, sizeof(a)) != 0);
+    }
+  db_clawd_render(DB_CLAWD_IDLE, DB_CLAWD_OPEN, 1000u, a);
+  db_clawd_render(DB_CLAWD_IDLE, DB_CLAWD_FOCUS, 2000u, b);
+  CHECK(memcmp(a, b, sizeof(a)) != 0);
+  for (an = 1; an < DB_CLAWD_ANIM_COUNT; an++) {
+    db_clawd_render(DB_CLAWD_IDLE, DB_CLAWD_OPEN, 300u, a);
+    db_clawd_render(an, DB_CLAWD_OPEN, 300u, b);
+    CHECK(memcmp(a, b, sizeof(a)) != 0);
+  }
+  db_clawd_render(DB_CLAWD_IDLE, DB_CLAWD_OPEN, 1234u, a);
+  db_clawd_render(200, 200, 1234u, b);
+  CHECK(memcmp(a, b, sizeof(a)) == 0);
+}
+
 int main(void)
 {
   test_crc();
@@ -456,6 +498,7 @@ int main(void)
   test_cycle();
   test_bounds();
   test_art();
+  test_clawd();
   printf("sizeof(db_engine_t) = %u (host), sizeof(db_face_t) = %u\n",
          (unsigned)sizeof(db_engine_t), (unsigned)sizeof(db_face_t));
   CHECK(sizeof(db_engine_t) <= 96);

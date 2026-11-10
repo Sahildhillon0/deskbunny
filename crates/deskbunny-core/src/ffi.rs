@@ -78,6 +78,7 @@ extern "C" {
         op: u8,
         fb: *mut u8,
     ) -> c_int;
+    pub fn db_clawd_render(anim: u8, expr: u8, now_ms: u32, fb: *mut u8);
 
     // build.rs layout shim
     pub fn db_sizeof_face() -> usize;

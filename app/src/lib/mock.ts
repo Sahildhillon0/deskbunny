@@ -4,7 +4,7 @@
 // C engine over IPC. Never import this directly: go through ./api.ts.
 
 import { composeDrawing } from "./drawing";
-import { MOODS, defaultFace, normalizeFace, sanitizeName, type Board, type FaceDef, type FlashProgress, type FlashReport, type Mood, type Port, type SetupStatus, type UpdateInfo, type UpdateProgress } from "./types";
+import { MOODS, defaultFace, normalizeFace, sanitizeName, type Board, type FaceDef, type FlashProgress, type FlashReport, type ClaudeView, type Design, type DesignCatalog, type DesignRender, type HooksStatus, type LiveConfig, type LiveStatus, type Mood, type Place, type Port, type ScreenRef, type WeatherNow, type SetupStatus, type UpdateInfo, type UpdateProgress } from "./types";
 
 const delay = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
@@ -52,13 +52,13 @@ export async function listPresets(): Promise<FaceDef[]> {
 // ---------------------------------------------------------------- boards / ports
 
 const BOARDS: Board[] = [
-  { id: "uno", name: "Uno R3", mcu: "atmega328p", protocol: "stk500v1", artCapacity: 8192 },
-  { id: "nano", name: "Nano (new bootloader)", mcu: "atmega328p", protocol: "stk500v1", artCapacity: 8192 },
-  { id: "nano_old", name: "Nano (old bootloader)", mcu: "atmega328p", protocol: "stk500v1", artCapacity: 8192 },
-  { id: "pro_mini", name: "Pro Mini 5V", mcu: "atmega328p", protocol: "stk500v1", artCapacity: 8192 },
+  { id: "uno", name: "Uno R3", mcu: "atmega328p", protocol: "stk500v1", artCapacity: 5632 },
+  { id: "nano", name: "Nano (new bootloader)", mcu: "atmega328p", protocol: "stk500v1", artCapacity: 5632 },
+  { id: "nano_old", name: "Nano (old bootloader)", mcu: "atmega328p", protocol: "stk500v1", artCapacity: 5632 },
+  { id: "pro_mini", name: "Pro Mini 5V", mcu: "atmega328p", protocol: "stk500v1", artCapacity: 5632 },
   { id: "mega", name: "Mega 2560", mcu: "atmega2560", protocol: "stk500v2", artCapacity: 32000 },
-  { id: "leonardo", name: "Leonardo", mcu: "atmega32u4", protocol: "avr109", artCapacity: 4032 },
-  { id: "micro", name: "Micro", mcu: "atmega32u4", protocol: "avr109", artCapacity: 4032 },
+  { id: "leonardo", name: "Leonardo", mcu: "atmega32u4", protocol: "avr109", artCapacity: 3200 },
+  { id: "micro", name: "Micro", mcu: "atmega32u4", protocol: "avr109", artCapacity: 3200 },
   { id: "uno_r4_minima", name: "Uno R4 Minima", mcu: "RA4M1", protocol: "dfu", artCapacity: 61440 },
   { id: "uno_r4_wifi", name: "Uno R4 WiFi", mcu: "RA4M1", protocol: "samba", artCapacity: 61440 },
   { id: "esp32", name: "ESP32", mcu: "esp32", protocol: "esptool" },
@@ -661,4 +661,209 @@ export async function updateInstall(): Promise<void> {
 
 export async function updateOpenReleases(): Promise<void> {
   window.open("https://github.com/Sahildhillon0/deskbunny/releases/latest", "_blank");
+}
+
+// ---------------------------------------------------------------- live mode
+
+let liveCfg: LiveConfig = {
+  enabled: false,
+  port: null,
+  screens: [
+    { kind: "face", enabled: true, seconds: 20 },
+    { kind: "design", design: "clock", enabled: true, seconds: 15 },
+    { kind: "claude", enabled: true, seconds: 15 },
+  ],
+  claudeStyle: "clawd",
+  claudeHold: true,
+  weather: { place: null, units: "metric", aqi: "us" },
+  notify: { enabled: true, desktop: true, seconds: 8, showBody: false, ignoreApps: [] },
+};
+let liveStat: LiveStatus = { state: "off", port: null, banner: null, clawd: false, screen: null, pinned: null, message: null };
+const liveListeners = new Set<(s: LiveStatus) => void>();
+
+function liveEmit(patch: Partial<LiveStatus>) {
+  liveStat = { ...liveStat, ...patch };
+  for (const cb of liveListeners) cb(liveStat);
+}
+
+export async function liveGetConfig(): Promise<LiveConfig> {
+  return structuredClone(liveCfg);
+}
+
+export async function liveSetConfig(config: LiveConfig): Promise<LiveConfig> {
+  liveCfg = structuredClone(config);
+  const on = config.enabled && !!config.port;
+  liveEmit(
+    on
+      ? { state: "connected", port: config.port, banner: "DESKBUNNY 0.1.14 atmega328p MOCK", clawd: true, screen: { kind: "face" } }
+      : { state: "off", port: null, banner: null, screen: null },
+  );
+  return structuredClone(liveCfg);
+}
+
+export async function liveStatus(): Promise<LiveStatus> {
+  return { ...liveStat };
+}
+
+export async function livePin(screen: ScreenRef | null): Promise<void> {
+  liveEmit({ pinned: screen, screen: screen ?? liveStat.screen });
+}
+
+/** Mock preview: a frame with the screen's name in big blocks (no font here). */
+export async function livePreview(screen: ScreenRef, tMs: number): Promise<ArrayBuffer> {
+  const fb = new Uint8Array(1024);
+  const set = (x: number, y: number) => {
+    if (x >= 0 && x < 128 && y >= 0 && y < 64) fb[(y >> 3) * 128 + x] |= 1 << (y & 7);
+  };
+  if (screen.kind === "design") {
+    const s = new Date().getSeconds();
+    for (let x = 4; x < 4 + Math.round((120 * s) / 59); x++) set(x, 40);
+  } else {
+    const bob = Math.floor(tMs / 700) % 2;
+    for (let x = 42; x < 86; x++) for (let y = 25 + bob; y < 49 + bob; y++) set(x, y);
+  }
+  return fb.buffer;
+}
+
+export async function onLiveStatus(cb: (s: LiveStatus) => void): Promise<() => void> {
+  liveListeners.add(cb);
+  return () => liveListeners.delete(cb);
+}
+
+export async function liveTestNotification(): Promise<void> {
+  liveEmit({ screen: { kind: "notify" } });
+}
+
+export async function claudeView(): Promise<ClaudeView> {
+  return { state: "idle", caption: "NO SESSIONS", project: "", sessions: 0, takeover: false, active: false };
+}
+
+let mockHooks = false;
+const hooksStatus = (): HooksStatus => ({
+  installed: mockHooks,
+  settingsPath: "~/.claude/settings.json",
+  command: "curl -s -m 1 -H 'X-DeskBunny: 1' ... http://127.0.0.1:47807/claude || true",
+});
+
+export async function claudeHooksStatus(): Promise<HooksStatus> {
+  return hooksStatus();
+}
+
+export async function claudeHooksInstall(): Promise<HooksStatus> {
+  mockHooks = true;
+  return hooksStatus();
+}
+
+export async function claudeHooksRemove(): Promise<HooksStatus> {
+  mockHooks = false;
+  return hooksStatus();
+}
+
+// ---------------------------------------------------------------- designs (mock: boxes only)
+
+const MOCK_TEMPLATES: Design[] = [
+  {
+    id: "clock",
+    name: "Clock",
+    elements: [
+      { type: "text", x: 64, y: 6, text: "{HH}:{MM}", font: "small", size: 4, align: "center", erase: false },
+      { type: "bar", x: 4, y: 40, w: 120, h: 1, value: "{SS}", max: "59" },
+      { type: "text", x: 64, y: 50, text: "{DAY} {D} {MON}", font: "small", size: 1, align: "center", erase: false },
+    ],
+  },
+];
+let mockDesigns: Design[] = structuredClone(MOCK_TEMPLATES);
+
+export async function designList(): Promise<Design[]> {
+  return structuredClone(mockDesigns);
+}
+
+export async function designCatalog(): Promise<DesignCatalog> {
+  return {
+    templates: structuredClone(MOCK_TEMPLATES),
+    tokens: [
+      ["HH", "hour 00-23"],
+      ["MM", "minute 00-59"],
+      ["SS", "second 00-59"],
+      ["TEMP", "temperature now"],
+    ],
+    icons: ["sun", "moon", "cloud", "rain", "bell", "heart"],
+  };
+}
+
+export async function designSave(d: Design): Promise<Design[]> {
+  const i = mockDesigns.findIndex((x) => x.id === d.id);
+  if (i >= 0) mockDesigns[i] = structuredClone(d);
+  else mockDesigns.push(structuredClone(d));
+  return designList();
+}
+
+export async function designDelete(id: string): Promise<Design[]> {
+  mockDesigns = mockDesigns.filter((d) => d.id !== id);
+  return designList();
+}
+
+/** Mock render: each element's box outlined (the real renderer is in Rust). */
+export async function designRender(d: Design): Promise<DesignRender> {
+  const fb = new Array<number>(1024).fill(0);
+  const set = (x: number, y: number) => {
+    if (x >= 0 && x < 128 && y >= 0 && y < 64) fb[(y >> 3) * 128 + x] |= 1 << (y & 7);
+  };
+  const bounds: [number, number, number, number][] = d.elements.map((e) => {
+    switch (e.type) {
+      case "text": {
+        const w = e.text.length * 6 * e.size;
+        const x = e.align === "center" ? e.x - w / 2 : e.align === "right" ? e.x - w : e.x;
+        return [Math.round(x), e.y, w, 7 * e.size];
+      }
+      case "line":
+        return [Math.min(e.x1, e.x2), Math.min(e.y1, e.y2), Math.abs(e.x1 - e.x2) + 1, Math.abs(e.y1 - e.y2) + 1];
+      case "analog":
+        return [e.cx - e.r, e.cy - e.r, 2 * e.r + 1, 2 * e.r + 1];
+      case "icon":
+        return [e.x, e.y, 16 * e.size, 16 * e.size];
+      default:
+        return [e.x, e.y, e.w, e.h];
+    }
+  });
+  for (const [x, y, w, h] of bounds) {
+    for (let i = 0; i < w; i++) {
+      set(x + i, y);
+      set(x + i, y + h - 1);
+    }
+    for (let j = 0; j < h; j++) {
+      set(x, y + j);
+      set(x + w - 1, y + j);
+    }
+  }
+  return { frame: fb, bounds };
+}
+
+export async function weatherSearch(q: string): Promise<Place[]> {
+  return q.length < 2 ? [] : [{ name: "Pune", detail: "Maharashtra, India", lat: 18.52, lon: 73.86 }];
+}
+
+export async function weatherNow(): Promise<WeatherNow> {
+  return liveCfg.weather.place
+    ? {
+        weather: {
+          city: "Pune",
+          temp: 27.6,
+          tmax: 31,
+          tmin: 18,
+          code: 2,
+          isDay: true,
+          humidity: 40,
+          wind: 7,
+          unit: "C",
+          windUnit: "km/h",
+          aqi: 99,
+          aqiScale: "US",
+          pm25: 25,
+          pm10: 33,
+        },
+        error: null,
+        ageSecs: 60,
+      }
+    : { weather: null, error: null, ageSecs: null };
 }

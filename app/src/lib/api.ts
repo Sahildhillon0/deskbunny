@@ -3,7 +3,26 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import type { Board, FaceDef, FlashProgress, FlashReport, Port, SetupStatus, UpdateInfo, UpdateProgress } from "./types";
+import type {
+  Board,
+  FaceDef,
+  FlashProgress,
+  FlashReport,
+  ClaudeView,
+  Design,
+  DesignCatalog,
+  DesignRender,
+  HooksStatus,
+  LiveConfig,
+  LiveStatus,
+  Place,
+  Port,
+  ScreenRef,
+  WeatherNow,
+  SetupStatus,
+  UpdateInfo,
+  UpdateProgress,
+} from "./types";
 
 // Loaded lazily so the mock never ships in the Tauri code path.
 const mock = () => import("./mock");
@@ -130,3 +149,73 @@ export function onUpdateProgress(cb: (p: UpdateProgress) => void): Promise<() =>
 
 export const updateOpenReleases = (): Promise<void> =>
   isTauri ? invoke<void>("update_open_releases") : mock().then((m) => m.updateOpenReleases());
+
+// ---------------------------------------------------------------- live mode
+
+export const liveGetConfig = (): Promise<LiveConfig> =>
+  isTauri ? invoke<LiveConfig>("live_get_config") : mock().then((m) => m.liveGetConfig());
+
+/** Saves and applies; resolves to the config as the backend sanitised it. */
+export const liveSetConfig = (config: LiveConfig): Promise<LiveConfig> =>
+  isTauri ? invoke<LiveConfig>("live_set_config", { config }) : mock().then((m) => m.liveSetConfig(config));
+
+export const liveStatus = (): Promise<LiveStatus> =>
+  isTauri ? invoke<LiveStatus>("live_status") : mock().then((m) => m.liveStatus());
+
+/** Keep one screen on the board (null = back to the rotation). */
+export const livePin = (screen: ScreenRef | null): Promise<void> =>
+  isTauri ? invoke<void>("live_pin", { screen }) : mock().then((m) => m.livePin(screen));
+
+/** One 1024-byte frame of a screen as the board will show it (not the face). */
+export async function livePreview(screen: ScreenRef, tMs: number): Promise<Uint8Array> {
+  const t = Math.max(0, Math.floor(tMs)) >>> 0;
+  return toBytes(isTauri ? await invoke<ArrayBuffer>("live_preview", { screen, tMs: t }) : await (await mock()).livePreview(screen, t));
+}
+
+export function onLiveStatus(cb: (s: LiveStatus) => void): Promise<() => void> {
+  if (!isTauri) return mock().then((m) => m.onLiveStatus(cb));
+  return listen<LiveStatus>("live-status", (ev) => cb(ev.payload));
+}
+
+export const liveTestNotification = (): Promise<void> =>
+  isTauri ? invoke<void>("live_test_notification") : mock().then((m) => m.liveTestNotification());
+
+export const claudeView = (): Promise<ClaudeView> =>
+  isTauri ? invoke<ClaudeView>("claude_view") : mock().then((m) => m.claudeView());
+
+export const claudeHooksStatus = (): Promise<HooksStatus> =>
+  isTauri ? invoke<HooksStatus>("claude_hooks_status") : mock().then((m) => m.claudeHooksStatus());
+
+/** Adds DeskBunny's hooks to ~/.claude/settings.json (backed up first). */
+export const claudeHooksInstall = (): Promise<HooksStatus> =>
+  isTauri ? invoke<HooksStatus>("claude_hooks_install") : mock().then((m) => m.claudeHooksInstall());
+
+export const claudeHooksRemove = (): Promise<HooksStatus> =>
+  isTauri ? invoke<HooksStatus>("claude_hooks_remove") : mock().then((m) => m.claudeHooksRemove());
+
+// ---------------------------------------------------------------- designs
+
+export const designList = (): Promise<Design[]> =>
+  isTauri ? invoke<Design[]>("design_list") : mock().then((m) => m.designList());
+
+export const designCatalog = (): Promise<DesignCatalog> =>
+  isTauri ? invoke<DesignCatalog>("design_catalog") : mock().then((m) => m.designCatalog());
+
+/** Insert or replace by id; resolves to every design. */
+export const designSave = (design: Design): Promise<Design[]> =>
+  isTauri ? invoke<Design[]>("design_save", { design }) : mock().then((m) => m.designSave(design));
+
+export const designDelete = (id: string): Promise<Design[]> =>
+  isTauri ? invoke<Design[]>("design_delete", { id }) : mock().then((m) => m.designDelete(id));
+
+/** Render an unsaved design with each element's bounds. */
+export const designRender = (design: Design): Promise<DesignRender> =>
+  isTauri ? invoke<DesignRender>("design_render", { design }) : mock().then((m) => m.designRender(design));
+
+// ---------------------------------------------------------------- weather
+
+export const weatherSearch = (query: string): Promise<Place[]> =>
+  isTauri ? invoke<Place[]>("weather_search", { query }) : mock().then((m) => m.weatherSearch(query));
+
+export const weatherNow = (): Promise<WeatherNow> =>
+  isTauri ? invoke<WeatherNow>("weather_now") : mock().then((m) => m.weatherNow());
