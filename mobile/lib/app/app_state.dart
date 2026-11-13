@@ -10,7 +10,10 @@ import '../model/drawing.dart';
 import '../model/face.dart';
 import '../protocol/bunny.dart';
 import 'face_store.dart';
+import 'phone_data.dart';
 import 'preview.dart';
+import 'widget_data.dart';
+import 'widget_settings.dart';
 
 const int opSetDnd = 0x23;
 
@@ -21,14 +24,28 @@ class AppState extends ChangeNotifier {
   final PreviewFactory previewFactory;
   final ClockRenderer clockRenderer;
 
+  /// Where the weather and air-quality widgets get their numbers.
+  final WidgetData widgetData;
+
+  /// What the phone knows (battery, calendar, the song) and where the widget
+  /// settings are kept. The background scheduler reads the same settings.
+  final PhoneApi phone;
+  final SettingsStore settingsStore;
+
   AppState({
     required this.link,
     Bunny? bunny,
     FaceStore? store,
     this.previewFactory = enginePreview,
     this.clockRenderer = engineClocks,
+    WidgetData? widgetData,
+    PhoneApi? phone,
+    SettingsStore? settingsStore,
   }) : bunny = bunny ?? Bunny(link),
-       store = store ?? PrefsFaceStore();
+       store = store ?? PrefsFaceStore(),
+       widgetData = widgetData ?? OpenMeteo(),
+       phone = phone ?? ChannelPhoneApi(),
+       settingsStore = settingsStore ?? PrefsSettingsStore();
 
   LinkStatus status = const LinkStatus(LinkState.unpaired);
 
@@ -54,6 +71,15 @@ class AppState extends ChangeNotifier {
   /// The clock the phone shows on the bunny: 0 = the face, 1..20 = a clock.
   int clockStyle = 0;
 
+  /// Everything the widgets remember (city, slots, auto-update, counter, ...).
+  WidgetSettings settings = const WidgetSettings();
+
+  /// What the background scheduler last did (read when the Widgets screen is open).
+  BgStatus bgStatus = const BgStatus();
+
+  GeoPlace? get place => settings.place;
+  bool get fahrenheit => settings.fahrenheit;
+
   StreamSubscription<LinkStatus>? _sub;
   bool _disposed = false;
 
@@ -64,6 +90,7 @@ class AppState extends ChangeNotifier {
     _sub = link.status.listen(_onStatus, onError: (Object _) {});
     unawaited(reloadSaved());
     unawaited(loadClock());
+    unawaited(loadWidgetSettings());
     try {
       _onStatus(await link.currentStatus());
     } on Object {
@@ -280,6 +307,56 @@ class AppState extends ChangeNotifier {
       _notify();
       rethrow;
     }
+  }
+
+  // ---------------------------------------------------------------- widgets
+
+  Future<void> loadWidgetSettings() async {
+    try {
+      settings = await settingsStore.load();
+      bgStatus = await settingsStore.loadStatus();
+    } on Object {
+      // No stored settings: start with the defaults.
+    }
+    _notify();
+  }
+
+  /// Applies [change] at once and writes the result to storage in the
+  /// background, so a slow disk never holds the screen up.
+  void updateSettings(WidgetSettings Function(WidgetSettings s) change) {
+    settings = change(settings);
+    _notify();
+    unawaited(settingsStore.save(settings));
+  }
+
+  Future<void> refreshBgStatus() async {
+    try {
+      final st = await settingsStore.loadStatus();
+      bgStatus = st;
+      _notify();
+    } on Object {
+      // keep the last one
+    }
+  }
+
+  void setPlace(GeoPlace p) => updateSettings((s) => s.copyWith(place: p));
+
+  void setFahrenheit(bool on) => updateSettings((s) => s.copyWith(fahrenheit: on));
+
+  /// Remember which slot a widget lives in. A slot belongs to one widget:
+  /// whichever widget had it before loses it (and its place in the rotation).
+  void assignSlot(String id, int slot) => updateSettings((s) {
+    final slots = {for (final e in s.slots.entries) if (e.value != slot) e.key: e.value, id: slot};
+    final rotation = {for (final r in s.rotation) if (slots.containsKey(r)) r};
+    return s.copyWith(slots: slots, rotation: rotation);
+  });
+
+  /// Which widget (if any) holds [slot].
+  String? widgetInSlot(int slot) {
+    for (final e in settings.slots.entries) {
+      if (e.value == slot) return e.key;
+    }
+    return null;
   }
 
   Future<void> saveNotifConfig(NotifConfig c) async {

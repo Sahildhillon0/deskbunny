@@ -287,3 +287,8 @@ python3 engine/tools/pbm2png.py in.pbm out.png [scale]                 # PBM to 
 | `tools/` | `deskbunny-notify` |
 | `docs/ARCHITECTURE.md` | How the parts fit together and the contracts between them |
 | `docs/SETUP.md`, `docs/RELEASING.md` | First-run setup, how releases are made |
+
+## License
+
+DeskBunny is released under the [MIT License](LICENSE). Third-party components
+keep their own licenses: see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

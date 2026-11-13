@@ -51,7 +51,7 @@ void main() {
     expect(find.byKey(const Key('editor-send')), findsOneWidget);
   });
 
-  testWidgets('Widgets holds the clock picker; weather and air quality are marked as coming', (tester) async {
+  testWidgets('Widgets holds the clock picker next to weather and air quality', (tester) async {
     final h = await pumpApp(tester, paired: true);
     await tester.tap(find.byKey(const Key('home-widgets')));
     await tester.pumpAndSettle();

@@ -21,8 +21,15 @@ import java.io.ByteArrayOutputStream
 import java.util.concurrent.Executors
 
 /** MethodChannel `nixxa/link` + EventChannel `nixxa/link/status` (ARCHITECTURE.md channel table). */
-class LinkChannel(private val activity: MainActivity, messenger: BinaryMessenger) : MethodChannel.MethodCallHandler {
-    private val ctx = activity.applicationContext
+class LinkChannel(
+    context: android.content.Context,
+    messenger: BinaryMessenger,
+    /** Null in the background engine the link service hosts: no screen to ask permissions on. */
+    private val activity: MainActivity?,
+    private val startService: Boolean = true,
+) : MethodChannel.MethodCallHandler {
+    private val ctx = context.applicationContext
+    private val ui = android.os.Handler(android.os.Looper.getMainLooper())
     private val methods = MethodChannel(messenger, "nixxa/link")
     private val events = EventChannel(messenger, "nixxa/link/status")
     private var statusListener: ((Link.Status) -> Unit)? = null
@@ -44,7 +51,13 @@ class LinkChannel(private val activity: MainActivity, messenger: BinaryMessenger
                 statusListener = null
             }
         })
-        if (Link.isPaired()) NixxaLinkService.start(ctx)
+        if (startService && Link.isPaired()) NixxaLinkService.start(ctx)
+    }
+
+    /** Opens a settings screen: from the app's activity, or from the background as a new task. */
+    private fun launch(i: Intent) {
+        val a = activity
+        if (a != null) a.startActivity(i) else ctx.startActivity(i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
     }
 
     fun dispose() {
@@ -59,7 +72,8 @@ class LinkChannel(private val activity: MainActivity, messenger: BinaryMessenger
             "status" -> result.success(Link.status.toMap())
             "pair" -> {
                 val qr = call.argument<String>("qr") ?: return result.error("BAD_QR", "Missing QR text", null)
-                activity.requestLinkPermissions { granted ->
+                val a = activity ?: return result.error("PERMISSION", "Pairing needs the app on screen", null)
+                a.requestLinkPermissions { granted ->
                     if (!granted) {
                         result.error("PERMISSION", "Nearby devices (Bluetooth) permission is needed to pair", null)
                     } else {
@@ -99,9 +113,9 @@ class LinkChannel(private val activity: MainActivity, messenger: BinaryMessenger
                     Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
                 }
                 try {
-                    activity.startActivity(i)
+                    launch(i)
                 } catch (_: Exception) {
-                    activity.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+                    launch(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
                 }
                 result.success(null)
             }
@@ -110,18 +124,16 @@ class LinkChannel(private val activity: MainActivity, messenger: BinaryMessenger
                 if (!pm.isIgnoringBatteryOptimizations(ctx.packageName)) {
                     try {
                         @Suppress("BatteryLife")
-                        activity.startActivity(
-                            Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:${ctx.packageName}")),
-                        )
+                        launch(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:${ctx.packageName}")))
                     } catch (_: Exception) {
-                        activity.startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+                        launch(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
                     }
                 }
                 result.success(null)
             }
             "listApps" -> io.execute {
                 val apps = try { listApps() } catch (e: Exception) { emptyList() }
-                activity.runOnUiThread { result.success(apps) }
+                ui.post { result.success(apps) }
             }
             "sendTestNotification" -> {
                 val payload = Proto.notify(

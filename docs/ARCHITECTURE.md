@@ -861,8 +861,23 @@ Channels: MethodChannel `nixxa/link`, EventChannel `nixxa/link/status`
 
 Errors are PlatformExceptions whose `code` is one of the `LinkException`
 codes in `device_link.dart`; DEVICE_ERROR carries `details = status byte`.
+
+Phone data for the widgets (`PhoneChannel.kt`): MethodChannel `nixxa/phone` and
+EventChannel `nixxa/phone/nowplaying` (an empty event whenever the song or its
+play state changes; Dart then calls `nowPlaying`).
+
+| Method | Args | Result |
+|---|---|---|
+| `battery` | – | `{percent: 0..100, charging: bool}` |
+| `calendarAllowed` | – | bool |
+| `requestCalendar` | – | bool (asks Android; from the app's screen only) |
+| `nextEvent` | – | `{title, startMs, allDay}` or null; error NO_PERMISSION. The next event within 7 days that has not ended; a timed event wins over an all-day one |
+| `nowPlaying` | – | `{title, artist, app, durationMs, positionMs, playing}` or null; error NO_ACCESS without notification access. Read from `MediaSessionManager.getActiveSessions` (the notification listener's access), so Spotify, YT Music and other players all work; the playing session wins, else a paused one |
+
 Permissions: BLUETOOTH_SCAN (neverForLocation), BLUETOOTH_CONNECT, CAMERA,
-POST_NOTIFICATIONS, FOREGROUND_SERVICE(_CONNECTED_DEVICE),
+INTERNET (only for the weather and air-quality widgets), READ_CALENDAR (only
+for the Next event widget), POST_NOTIFICATIONS,
+FOREGROUND_SERVICE(_CONNECTED_DEVICE),
 RECEIVE_BOOT_COMPLETED, REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, plus a
 `<queries>` entry for launcher apps (no QUERY_ALL_PACKAGES). minSdk 26,
 target the latest SDK.
@@ -873,10 +888,48 @@ target the latest SDK.
    progress through scan → bond → auth, and readable errors.
 2. Home: link state, chip and firmware (tap it to open the Device screen),
    the active face (live EngineSim preview), then "Faces": Expressions (every
-   preset and saved face, opens the editor), Widgets (the clock picker;
-   weather and air quality are listed as coming, they need internet), Add
-   GIF / images (the drawing editor's importer, then the face editor) and
-   Drawing.
+   preset and saved face, opens the editor), Widgets (the clock picker, and
+   the weather and air-quality widgets, below), Add GIF / images (the drawing
+   editor's importer, then the face editor) and Drawing.
+
+   Widgets are pictures the phone makes and puts in a slot: one 128x64
+   replace-mode drawing frame drawn with a 5x7 pixel font and a few shapes
+   (`pixel_font.dart`, `widget_render.dart`; no engine or firmware change),
+   sent with PUT_SLOT (plus ACTIVATE the first time). The clock is the one
+   widget the bunny draws itself (SET_CLOCK). The rest:
+   - Weather and air quality (`widget_data.dart`): the phone looks a city up
+     on Open-Meteo (geocoding, forecast and air-quality APIs, HTTPS, no key;
+     only the city name typed and the coordinates picked leave the phone).
+   - Phone battery, Next event (calendar) and Now playing (the media session)
+     come from `nixxa/phone` above.
+   - Counter and Status sign are what you type.
+   Each widget remembers the slot it was sent to; one slot holds one widget
+   (taking another's slot asks first). Everything the widgets remember lives in
+   one JSON document (`widget_settings.dart`) in SharedPreferencesAsync, which
+   reads straight from disk so the app and the background engine always agree.
+
+   Auto-update (`widget_scheduler.dart`, switch on the Widgets screen): the
+   widgets switched on are refreshed in their slots (internet widgets every
+   15/30/60 minutes, phone widgets every 5 minutes, the counter on every pass,
+   a picture that did not change is never re-sent) and the bunny is rotated
+   through them every 30 s / 1 min / 5 min, optionally with the user's own
+   face in the cycle. Switching it off puts the face back. A face the user
+   picks while it runs is left alone for ten minutes. Now playing is a
+   separate switch: a song that starts or changes is shown at once, paused and
+   resumed likewise, the progress bar moves every 10 seconds, rotation stays
+   away while it plays, and the face returns 15 seconds after a pause or when
+   the player closes. PUT_SLOT on the slot on screen redraws it live. Each
+   PUT_SLOT and each ACTIVATE is a flash write on the bunny, which is why the
+   fastest rotation is 30 s and the bar moves every 10 s.
+
+   The scheduler runs in a headless Flutter engine that `NixxaLinkService`
+   hosts (Dart entry point `backgroundMain` in lib/main.dart, lib/app/
+   background.dart), so it keeps working with the app closed. That engine has
+   its own `nixxa/link` and `nixxa/phone` channels (no activity: it cannot ask
+   for permissions). It starts with the service, which runs only while a bunny
+   is paired, and reports what it did through a status key the Widgets screen
+   reads. It sends nothing while the bunny is away, and nothing at all while
+   both switches are off.
 3. Library: 16 slots on the device (LIST_SLOTS), each with a preview of the
    face it holds (one GET_SLOT per used slot, read in the background after a
    refresh); tap to activate; edit, delete, and a local library of saved

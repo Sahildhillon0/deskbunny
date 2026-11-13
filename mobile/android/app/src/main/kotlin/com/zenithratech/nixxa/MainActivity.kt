@@ -9,17 +9,33 @@ import io.flutter.embedding.engine.FlutterEngine
 
 class MainActivity : FlutterActivity() {
     private var channel: LinkChannel? = null
+    private var phone: PhoneChannel? = null
     private var permCallback: ((Boolean) -> Unit)? = null
+    private var calendarCallback: ((Boolean) -> Unit)? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
-        channel = LinkChannel(this, flutterEngine.dartExecutor.binaryMessenger)
+        val messenger = flutterEngine.dartExecutor.binaryMessenger
+        channel = LinkChannel(this, messenger, this)
+        phone = PhoneChannel(applicationContext, messenger, this)
     }
 
     override fun cleanUpFlutterEngine(flutterEngine: FlutterEngine) {
         channel?.dispose()
         channel = null
+        phone?.dispose()
+        phone = null
         super.cleanUpFlutterEngine(flutterEngine)
+    }
+
+    /** The Next event widget reads the calendar; Android asks the first time. */
+    fun requestCalendarPermission(cb: (Boolean) -> Unit) {
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_CALENDAR) == PackageManager.PERMISSION_GRANTED) {
+            return cb(true)
+        }
+        calendarCallback?.invoke(false)
+        calendarCallback = cb
+        requestPermissions(arrayOf(Manifest.permission.READ_CALENDAR), REQ_CAL)
     }
 
     /** Bluetooth permissions are required (false when denied); POST_NOTIFICATIONS is asked for too but optional. */
@@ -44,6 +60,12 @@ class MainActivity : FlutterActivity() {
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == REQ_CAL) {
+            val cb = calendarCallback
+            calendarCallback = null
+            cb?.invoke(grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED)
+            return
+        }
         if (requestCode != REQ_PERMS) return
         val cb = permCallback
         permCallback = null
@@ -52,5 +74,6 @@ class MainActivity : FlutterActivity() {
 
     companion object {
         private const val REQ_PERMS = 0x6E78
+        private const val REQ_CAL = 0x6E79
     }
 }

@@ -1,6 +1,7 @@
 // Human labels for enums and errors.
 import '../link/device_link.dart';
 import '../model/face.dart';
+import 'widget_data.dart';
 
 String moodLabel(Mood m) => switch (m) {
   Mood.eyeroll => 'Eye roll',
@@ -70,6 +71,7 @@ String errorMessage(Object e) {
       _ => e.message.isEmpty ? 'Something went wrong (${e.code}).' : e.message,
     };
   }
+  if (e is WidgetDataException) return e.message;
   if (e is FormatException) return e.message.isEmpty ? 'The file or data is not valid.' : e.message;
   if (e is ArgumentError && e.message is String) return e.message as String;
   return 'Something went wrong: $e';

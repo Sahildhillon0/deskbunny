@@ -16,14 +16,24 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
 import com.zenithratech.nixxa.link.Link
+import io.flutter.FlutterInjector
+import io.flutter.embedding.engine.FlutterEngine
+import io.flutter.embedding.engine.dart.DartExecutor
 
 /**
  * Foreground service (type connectedDevice) that keeps the process, and with it
  * the one BLE connection owned by [Link], alive while the UI is gone.
  * Runs only while a bunny is paired.
+ *
+ * It also hosts a headless Flutter engine that runs `backgroundMain` (lib/main.dart):
+ * the widget scheduler, which keeps the weather, battery, song and other widgets
+ * fresh on the bunny and rotates through them when the app is closed.
  */
 class NixxaLinkService : Service() {
     private var failed = false
+    private var bgEngine: FlutterEngine? = null
+    private var bgLink: LinkChannel? = null
+    private var bgPhone: PhoneChannel? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -50,13 +60,46 @@ class NixxaLinkService : Service() {
             return START_NOT_STICKY
         }
         Link.ensureRunning()
+        startBackground()
         return START_STICKY
     }
 
     override fun onDestroy() {
         instance = null
+        stopBackground()
         Link.stopLoop()
         super.onDestroy()
+    }
+
+    /** Starts the widget scheduler's Dart engine once; a failure only costs auto-update. */
+    private fun startBackground() {
+        if (bgEngine != null) return
+        try {
+            val loader = FlutterInjector.instance().flutterLoader()
+            loader.startInitialization(applicationContext)
+            loader.ensureInitializationComplete(applicationContext, null)
+            val engine = FlutterEngine(applicationContext)
+            val messenger = engine.dartExecutor.binaryMessenger
+            bgLink = LinkChannel(applicationContext, messenger, null, startService = false)
+            bgPhone = PhoneChannel(applicationContext, messenger, null)
+            engine.dartExecutor.executeDartEntrypoint(
+                DartExecutor.DartEntrypoint(loader.findAppBundlePath(), "backgroundMain"),
+            )
+            bgEngine = engine
+            Log.i(TAG, "widget scheduler engine started")
+        } catch (e: Exception) {
+            Log.w(TAG, "could not start the widget scheduler engine", e)
+            stopBackground()
+        }
+    }
+
+    private fun stopBackground() {
+        bgLink?.dispose()
+        bgLink = null
+        bgPhone?.dispose()
+        bgPhone = null
+        bgEngine?.destroy()
+        bgEngine = null
     }
 
     private fun notification(st: Link.Status): Notification {
