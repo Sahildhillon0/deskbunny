@@ -78,6 +78,15 @@ fn handle(mut req: tiny_http::Request, live: &Live) {
                 reply(req, 400, json!({"error": "not a Claude Code hook payload"}))
             }
         }
+        (Method::Post, "/usage") => {
+            let Ok(v) = serde_json::from_str::<Value>(&body) else {
+                return reply(req, 400, json!({"error": "body is not JSON"}));
+            };
+            match live.usage_event(&v) {
+                Ok(source) => reply(req, 200, json!({"ok": true, "source": source})),
+                Err(e) => reply(req, 400, json!({"error": e})),
+            }
+        }
         (Method::Post, "/notify") => {
             let n = parse_notification(&body);
             match n {
@@ -89,7 +98,11 @@ fn handle(mut req: tiny_http::Request, live: &Live) {
             }
         }
         (Method::Get, "/status") => {
-            let v = json!({ "claude": live.claude_view(), "live": live.status() });
+            let v = json!({
+                "claude": live.claude_view(),
+                "usage": live.usage_now(),
+                "live": live.status(),
+            });
             reply(req, 200, v)
         }
         _ => reply(req, 404, json!({"error": "unknown endpoint"})),

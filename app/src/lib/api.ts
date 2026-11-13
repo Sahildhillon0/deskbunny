@@ -19,6 +19,8 @@ import type {
   Port,
   ScreenRef,
   WeatherNow,
+  UsageHarness,
+  UsageNow,
   SetupStatus,
   UpdateInfo,
   UpdateProgress,
@@ -219,3 +221,11 @@ export const weatherSearch = (query: string): Promise<Place[]> =>
 
 export const weatherNow = (): Promise<WeatherNow> =>
   isTauri ? invoke<WeatherNow>("weather_now") : mock().then((m) => m.weatherNow());
+
+// ---------------------------------------------------------------- AI usage
+
+export const usageHarnesses = (): Promise<UsageHarness[]> =>
+  isTauri ? invoke<UsageHarness[]>("usage_harnesses") : mock().then((m) => m.usageHarnesses());
+
+export const usageNow = (): Promise<UsageNow> =>
+  isTauri ? invoke<UsageNow>("usage_now") : mock().then((m) => m.usageNow());
