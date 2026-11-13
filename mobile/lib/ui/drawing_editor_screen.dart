@@ -1,23 +1,25 @@
 // 5. Drawing editor: 128x64 pixel canvas with zoom and pan (pinch with two
-// fingers), pen/eraser/fill/line/rect/ellipse, 1..10 frames, onion skin,
+// fingers), pen/eraser/fill/line/rect/ellipse/text, 1..10 frames, onion skin,
 // replace/over, frame time, GIF import, and a size meter against maxArtBytes.
 // Pops with the edited Drawing.
+import 'dart:async';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
-import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 
 import '../app/art_size.dart';
 import '../app/pixels.dart';
+import '../app/text_raster.dart';
 import '../app/theme.dart';
 import '../model/drawing.dart';
 import '../model/face.dart';
 import '../protocol/blob.dart' show maxArtBytes;
 import 'widgets/common.dart';
+import 'widgets/import_sheet.dart';
 import 'widgets/oled.dart';
 
-enum DrawTool { pen, eraser, fill, line, rect, ellipse, pan }
+enum DrawTool { pen, eraser, fill, line, rect, ellipse, text, pan }
 
 class DrawingEditorScreen extends StatefulWidget {
   final Drawing? drawing;
@@ -39,6 +41,7 @@ class _DrawingEditorScreenState extends State<DrawingEditorScreen> {
   int _cur = 0;
   DrawTool _tool = DrawTool.pen;
   int _brush = 1;
+  int _textSize = 14;
   bool _filled = false;
   bool _onion = true;
   bool _dirty = false;
@@ -101,6 +104,14 @@ class _DrawingEditorScreenState extends State<DrawingEditorScreen> {
     _multi = d.pointerCount > 1 || _tool == DrawTool.pan;
     if (_multi) return;
     final p = _toPixel(d.localFocalPoint, px);
+    if (_tool == DrawTool.text) {
+      // A tap puts the text's top-left corner here; the dialog asks for the words.
+      _base = null;
+      _from = null;
+      _last = null;
+      unawaited(_placeText(p));
+      return;
+    }
     final frame = _frames[_cur];
     _checkpoint();
     _base = Uint8List.fromList(frame);
@@ -225,18 +236,31 @@ class _DrawingEditorScreenState extends State<DrawingEditorScreen> {
 
   void _whole(Uint8List Function(Uint8List) op) => _frameOp(() => _frames[_cur] = op(_frames[_cur]));
 
-  Future<void> _importGif() async {
-    final file = await openFile(
-      acceptedTypeGroups: const [
-        XTypeGroup(label: 'Images', extensions: ['gif', 'png', 'jpg', 'jpeg', 'bmp', 'webp'], mimeTypes: ['image/*']),
-      ],
+  Future<void> _placeText(Pt at) async {
+    final choice = await showDialog<_TextChoice>(
+      context: context,
+      builder: (_) => _TextDialog(size: _textSize),
     );
-    if (file == null || !mounted) return;
-    final opts = await showModalBottomSheet<_ImportOptions>(context: context, builder: (_) => const _ImportSheet());
-    if (opts == null || !mounted) return;
+    if (choice == null || !mounted) return;
+    _textSize = choice.size;
+    final pts = await textPixels(choice.text, size: choice.size);
+    if (pts.isEmpty || !mounted) return;
+    _checkpoint();
+    setState(() {
+      final frame = _frames[_cur];
+      for (final (dx, dy) in pts) {
+        setPx(frame, at.$1 + dx, at.$2 + dy, true);
+      }
+    });
+  }
+
+  Future<void> _importGif() async {
     await guard(context, () async {
-      final bytes = await file.readAsBytes();
-      final r = importImage(bytes, threshold: opts.threshold, dither: opts.dither, invert: opts.invert);
+      final r = await pickImportedImage(
+        context,
+        note: 'Replaces every frame. GIFs keep up to 10 frames, evenly spread.',
+      );
+      if (r == null || !mounted) return;
       _checkpoint();
       setState(() {
         _frames = r.frames;
@@ -477,10 +501,16 @@ class _DrawingEditorScreenState extends State<DrawingEditorScreen> {
           tool(DrawTool.line, Icons.horizontal_rule, 'Line'),
           tool(DrawTool.rect, Icons.crop_square, 'Rectangle'),
           tool(DrawTool.ellipse, Icons.circle_outlined, 'Ellipse'),
+          tool(DrawTool.text, Icons.text_fields, 'Text'),
           tool(DrawTool.pan, Icons.pan_tool_outlined, 'Move the view'),
           const SizedBox(width: 8),
           if (_tool == DrawTool.rect || _tool == DrawTool.ellipse)
             TextButton(onPressed: () => setState(() => _filled = !_filled), child: Text(_filled ? 'Filled' : 'Outline'))
+          else if (_tool == DrawTool.text)
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 8),
+              child: Text('Tap the canvas to place text', style: TextStyle(fontSize: 12, color: NixxaColors.text3)),
+            )
           else
             TextButton(onPressed: () => setState(() => _brush = _brush % 4 + 1), child: Text('Brush $_brush px')),
         ],
@@ -582,63 +612,69 @@ class _SizeMeter extends StatelessWidget {
   static String _kb(int n) => n < 1024 ? '$n B' : '${(n / 1024).toStringAsFixed(1)} KB';
 }
 
-class _ImportOptions {
-  final int threshold;
-  final bool dither, invert;
-  const _ImportOptions(this.threshold, this.dither, this.invert);
+class _TextChoice {
+  final String text;
+  final int size;
+  const _TextChoice(this.text, this.size);
 }
 
-class _ImportSheet extends StatefulWidget {
-  const _ImportSheet();
+/// Asks for the words and a size; pops a [_TextChoice] or null.
+class _TextDialog extends StatefulWidget {
+  final int size;
+  const _TextDialog({required this.size});
 
   @override
-  State<_ImportSheet> createState() => _ImportSheetState();
+  State<_TextDialog> createState() => _TextDialogState();
 }
 
-class _ImportSheetState extends State<_ImportSheet> {
-  int _threshold = 128;
-  bool _dither = true, _invert = false;
+class _TextDialogState extends State<_TextDialog> {
+  final _text = TextEditingController();
+  late int _size = widget.size;
 
   @override
-  Widget build(BuildContext context) => SafeArea(
-    child: Padding(
-      padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          const Text('Import', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
-          const SizedBox(height: 4),
-          const Text(
-            'Replaces every frame. GIFs keep up to 10 frames, evenly spread.',
-            style: TextStyle(fontSize: 12, color: NixxaColors.text3),
-          ),
-          SwitchRow(
-            label: 'Dither',
-            hint: 'Shades become dot patterns',
-            value: _dither,
-            onChanged: (v) => setState(() => _dither = v),
-          ),
-          SwitchRow(
-            label: 'Invert',
-            hint: 'For dark drawings on a light background',
-            value: _invert,
-            onChanged: (v) => setState(() => _invert = v),
-          ),
-          SliderRow(
-            label: 'Threshold',
-            value: _threshold,
-            min: 1,
-            max: 254,
-            onChanged: (v) => setState(() => _threshold = v),
-          ),
-          const SizedBox(height: 8),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, _ImportOptions(_threshold, _dither, _invert)),
-            child: const Text('Import'),
-          ),
-        ],
-      ),
+  void dispose() {
+    _text.dispose();
+    super.dispose();
+  }
+
+  void _done() {
+    final t = _text.text.trim();
+    Navigator.pop(context, t.isEmpty ? null : _TextChoice(t, _size));
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: const Text('Add text'),
+    content: Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        TextField(
+          key: const Key('text-input'),
+          controller: _text,
+          autofocus: true,
+          maxLength: maxTextChars,
+          textInputAction: TextInputAction.done,
+          decoration: const InputDecoration(hintText: 'What should it say?'),
+          onSubmitted: (_) => _done(),
+        ),
+        const SizedBox(height: 8),
+        const Text('Size', style: TextStyle(fontSize: 12, color: NixxaColors.text3)),
+        const SizedBox(height: 6),
+        SegmentedButton<int>(
+          segments: [
+            for (var i = 0; i < textSizes.length; i++)
+              ButtonSegment(value: textSizes[i], label: Text(const ['S', 'M', 'L', 'XL'][i], key: Key('text-size-$i'))),
+          ],
+          selected: {_size},
+          showSelectedIcon: false,
+          onSelectionChanged: (s) => setState(() => _size = s.first),
+        ),
+      ],
     ),
+    actions: [
+      TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+      TextButton(key: const Key('text-add'), onPressed: _done, child: const Text('Add')),
+    ],
   );
 }

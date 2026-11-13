@@ -211,6 +211,15 @@ class _NotificationsScreenState extends State<NotificationsScreen> with WidgetsB
                 ),
                 const SectionLabel('Calls and quiet time'),
                 SwitchRow(
+                  key: const Key('notif-dnd'),
+                  label: 'Do Not Disturb',
+                  hint: app.connected
+                      ? 'Silences the bunny until you turn it off'
+                      : 'Connect to the bunny to change this',
+                  value: app.device?.dnd ?? false,
+                  onChanged: app.connected && app.device != null ? (v) => guard(context, () => app.setDnd(v)) : null,
+                ),
+                SwitchRow(
                   label: 'Incoming calls',
                   hint: 'Ring on the bunny with the caller\'s name',
                   value: c.calls,
@@ -256,20 +265,43 @@ class _NotificationsScreenState extends State<NotificationsScreen> with WidgetsB
                     onChanged: (v) => _save(copyConfig(c, callsInQuiet: v)),
                   ),
                 ],
-                const SectionLabel('Apps'),
-                const Text(
-                  'Only the apps switched on here show on the bunny.',
-                  style: TextStyle(fontSize: 12, color: NixxaColors.text3),
+                const SizedBox(height: 12),
+                // Collapsed by default: the list is long, and most people only
+                // open it to switch one app on.
+                Theme(
+                  data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+                  child: ExpansionTile(
+                    key: const Key('notif-apps'),
+                    tilePadding: EdgeInsets.zero,
+                    childrenPadding: EdgeInsets.zero,
+                    title: const Text('Apps', style: TextStyle(fontWeight: FontWeight.w600)),
+                    subtitle: Text(
+                      _appsSummary(c),
+                      style: const TextStyle(fontSize: 12, color: NixxaColors.text3),
+                    ),
+                    children: [
+                      const Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          'Only the apps switched on here show on the bunny.',
+                          style: TextStyle(fontSize: 12, color: NixxaColors.text3),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      TextField(
+                        key: const Key('notif-search'),
+                        decoration: const InputDecoration(
+                          prefixIcon: Icon(Icons.search, size: 20),
+                          hintText: 'Search apps',
+                        ),
+                        onChanged: (v) => setState(() => _query = v.trim().toLowerCase()),
+                      ),
+                      const SizedBox(height: 8),
+                      if (_isIOS) _bundleIdRow(),
+                      ..._appRows(c),
+                    ],
+                  ),
                 ),
-                const SizedBox(height: 8),
-                TextField(
-                  key: const Key('notif-search'),
-                  decoration: const InputDecoration(prefixIcon: Icon(Icons.search, size: 20), hintText: 'Search apps'),
-                  onChanged: (v) => setState(() => _query = v.trim().toLowerCase()),
-                ),
-                const SizedBox(height: 8),
-                if (_isIOS) _bundleIdRow(),
-                ..._appRows(c),
                 const SizedBox(height: 16),
                 OutlinedButton.icon(
                   key: const Key('notif-test'),
@@ -282,6 +314,15 @@ class _NotificationsScreenState extends State<NotificationsScreen> with WidgetsB
               ],
             ),
     );
+  }
+
+  static String _appsSummary(NotifConfig c) {
+    final on = c.rules.where((r) => r.show).length;
+    return switch (on) {
+      0 => 'None switched on',
+      1 => '1 app switched on',
+      _ => '$on apps switched on',
+    };
   }
 
   void _quiet(NotifConfig c, {int? start, int? end}) {

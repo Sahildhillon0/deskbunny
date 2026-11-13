@@ -41,6 +41,13 @@ class AppState extends ChangeNotifier {
   bool refreshing = false;
   String? refreshError;
 
+  /// What each used slot holds, for the Library previews. Filled in the
+  /// background after a refresh (one GET_SLOT per slot); a slot without an
+  /// entry yet shows its name only.
+  final Map<int, SavedFace> slotFaces = {};
+  bool _loadingPreviews = false;
+  bool _previewsDirty = false;
+
   List<SavedFace> saved = const [];
   NotifConfig? notifConfig;
 
@@ -75,6 +82,7 @@ class AppState extends ChangeNotifier {
       device = null;
       slots = const [];
       activeFace = null;
+      slotFaces.clear();
     }
     _notify();
     if (s.state == LinkState.connected && !wasConnected) unawaited(refresh());
@@ -122,6 +130,39 @@ class AppState extends ChangeNotifier {
       refreshing = false;
       _notify();
     }
+    if (refreshError == null) unawaited(_loadSlotPreviews());
+  }
+
+  /// Reads every used slot we have no (current) copy of. Runs after the
+  /// refresh so the Home screen is never kept waiting on it.
+  Future<void> _loadSlotPreviews() async {
+    _previewsDirty = true;
+    if (_loadingPreviews) return;
+    _loadingPreviews = true;
+    try {
+      while (_previewsDirty) {
+        _previewsDirty = false;
+        slotFaces.removeWhere((slot, _) => !isUsed(slot));
+        final active = activeFace, d = device;
+        if (active != null && d != null) slotFaces[d.activeSlot] = active;
+        for (var i = 0; i < Bunny.slots; i++) {
+          if (_disposed || !connected) return;
+          if (!isUsed(i)) continue;
+          final have = slotFaces[i];
+          // The name comes from LIST_SLOTS, so a renamed slot is re-read.
+          if (have != null && have.face.name == slotName(i)) continue;
+          try {
+            final (face, drawing) = await bunny.getSlot(i);
+            slotFaces[i] = SavedFace(face, drawing);
+            _notify();
+          } on Object {
+            // Leave this slot as a name-only tile.
+          }
+        }
+      }
+    } finally {
+      _loadingPreviews = false;
+    }
   }
 
   Future<void> _loadActive() async {
@@ -167,6 +208,7 @@ class AppState extends ChangeNotifier {
 
   Future<void> deleteSlot(int slot) async {
     await bunny.deleteSlot(slot);
+    slotFaces.remove(slot);
     await refresh();
   }
 
@@ -176,6 +218,7 @@ class AppState extends ChangeNotifier {
   Future<void> sendFace(int slot, FaceDef face, Drawing? drawing) async {
     await bunny.putSlot(slot, face, drawing);
     await bunny.activate(slot);
+    slotFaces.remove(slot);
     await refresh();
   }
 

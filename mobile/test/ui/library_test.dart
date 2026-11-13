@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nixxa/app/face_store.dart';
 import 'package:nixxa/model/face.dart';
+import 'package:nixxa/ui/library_screen.dart';
 
 import 'harness.dart';
 
@@ -44,6 +45,9 @@ void main() {
     final store = MemoryFaceStore([const SavedFace(FaceDef(name: 'SAVED', mood: Mood.love))]);
     final h = await pumpApp(tester, paired: true, store: store);
     await goTab(tester, 'Library');
+    // The slot previews push "On this phone" below the fold.
+    final list = find.descendant(of: find.byType(LibraryScreen), matching: find.byType(Scrollable)).first;
+    await tester.scrollUntilVisible(find.byKey(const Key('saved-SAVED')), 100, scrollable: list);
     expect(find.byKey(const Key('saved-SAVED')), findsOneWidget);
 
     await tester.tap(find.byKey(const Key('saved-send-SAVED')));

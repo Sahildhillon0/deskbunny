@@ -8,7 +8,6 @@ import 'package:provider/provider.dart';
 import '../app/app_state.dart';
 import '../app/labels.dart';
 import '../app/theme.dart';
-import 'clock_screen.dart';
 import 'home_screen.dart' show linkColor;
 import 'widgets/common.dart';
 
@@ -26,7 +25,13 @@ class DeviceScreen extends StatelessWidget {
       action: 'Forget',
       destructive: true,
     );
-    if (ok && context.mounted) await guard(context, app.forget);
+    if (!ok || !context.mounted) return;
+    final nav = Navigator.of(context);
+    if (await guard(context, app.forget)) {
+      // Opened from Home, this screen sits above the root: leave it, so the
+      // Pair screen is what the user sees.
+      nav.popUntil((route) => route.isFirst);
+    }
   }
 
   @override
@@ -76,20 +81,6 @@ class DeviceScreen extends StatelessWidget {
               ],
             ),
           ),
-          const SectionLabel('Display'),
-          Card(
-            child: ListTile(
-              key: const Key('device-clock'),
-              leading: const Icon(Icons.schedule),
-              title: const Text('Clock'),
-              subtitle: Text(
-                app.clockStyle == 0 ? 'Shows the face' : app.clockRenderer.name(app.clockStyle),
-                style: const TextStyle(fontSize: 12, color: NixxaColors.text3),
-              ),
-              trailing: const Icon(Icons.chevron_right, color: NixxaColors.text3),
-              onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const ClockScreen())),
-            ),
-          ),
           const SectionLabel('Stay connected'),
           if (ios)
             Text(
@@ -120,11 +111,19 @@ class DeviceScreen extends StatelessWidget {
               foregroundColor: NixxaColors.danger,
               side: const BorderSide(color: Color(0x59F2938A)),
             ),
-            onPressed: () => _forget(context),
+            // The bunny has to hear the UNPAIR, or it stays locked to this phone.
+            onPressed: app.connected ? () => _forget(context) : null,
             icon: const Icon(Icons.link_off),
             label: const Text('Forget device'),
           ),
           const SizedBox(height: 8),
+          if (!app.connected)
+            const Text(
+              'Connect to the bunny to forget it. It has to be told to let go of this phone.',
+              key: Key('device-forget-hint'),
+              style: TextStyle(fontSize: 12, color: NixxaColors.text3),
+            ),
+          if (!app.connected) const SizedBox(height: 4),
           if (ios)
             Text(
               'iOS keeps its own Bluetooth pairing: after forgetting, also choose Forget This Device for $name '
