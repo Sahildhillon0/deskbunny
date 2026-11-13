@@ -80,6 +80,14 @@ Future<void> seedSlot(FakeDeviceLink link, int slot, FaceDef face, [Drawing? dra
   await link.request(BunnyOp.putSlot, Bunny.encodePutSlot(slot, face, drawing));
 }
 
+/// Home > Widgets > Clock.
+Future<void> openClock(WidgetTester tester) async {
+  await tester.tap(find.byKey(const Key('home-widgets')));
+  await tester.pumpAndSettle();
+  await tester.tap(find.byKey(const Key('widgets-clock')));
+  await tester.pumpAndSettle();
+}
+
 Future<void> goTab(WidgetTester tester, String label) async {
   await tester.tap(find.descendant(of: find.byType(NavigationBar), matching: find.text(label)));
   await tester.pumpAndSettle();

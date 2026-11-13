@@ -29,7 +29,12 @@ void main() {
     var c = await h.link.getNotifConfig();
     expect((c.quietStartMin, c.quietEndMin), (22 * 60, 7 * 60));
 
-    // Turn on Discord, found through search, and give it a mood.
+    // The app list starts closed; open it, then turn on Discord, found through
+    // search, and give it a mood.
+    expect(find.byKey(const Key('notif-search')), findsNothing);
+    await tester.ensureVisible(find.byKey(const Key('notif-apps')));
+    await tester.tap(find.byKey(const Key('notif-apps')));
+    await tester.pumpAndSettle();
     await tester.enterText(find.byKey(const Key('notif-search')), 'disc');
     await tester.pumpAndSettle();
     expect(find.text('Gmail'), findsNothing);

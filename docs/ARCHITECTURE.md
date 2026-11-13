@@ -871,21 +871,28 @@ target the latest SDK.
 
 1. Pair: camera QR scan (mobile_scanner) with a manual-entry fallback,
    progress through scan → bond → auth, and readable errors.
-2. Home: link state, chip and firmware, the active face (live EngineSim
-   preview), quick actions.
-3. Library: 16 slots on the device (LIST_SLOTS); tap to activate; edit,
-   delete, and a local library of saved faces. Import and export of
-   `.deskbunny.json`.
+2. Home: link state, chip and firmware (tap it to open the Device screen),
+   the active face (live EngineSim preview), then "Faces": Expressions (every
+   preset and saved face, opens the editor), Widgets (the clock picker;
+   weather and air quality are listed as coming, they need internet), Add
+   GIF / images (the drawing editor's importer, then the face editor) and
+   Drawing.
+3. Library: 16 slots on the device (LIST_SLOTS), each with a preview of the
+   face it holds (one GET_SLOT per used slot, read in the background after a
+   refresh); tap to activate; edit, delete, and a local library of saved
+   faces. Import and export of `.deskbunny.json`.
 4. Face editor: every FaceDef field, all 30 moods, overlays and the mood
    cycle, with a live preview. "Send to bunny" = PUT_SLOT plus ACTIVATE.
-5. Drawing editor: 128x64 pixel canvas, 1..10 frames, frame time,
+5. Drawing editor: 128x64 pixel canvas, pen/eraser/fill/shapes and a text
+   tool (the platform font, thresholded to pixels), 1..10 frames, frame time,
    replace/over, GIF import (package `image`, dithered to 1 bpp), and a
    size meter against `maxArtBytes`.
-6. Notifications: master switch, notification-access status, an app picker
-   with a per-app mood, quiet hours, follow DND, calls, card seconds, default
-   mood, and a test button.
+6. Notifications: master switch, notification-access status, Do Not Disturb
+   on the bunny (SET_DND), quiet hours, follow phone DND, calls, card seconds,
+   default mood, a collapsed "Apps" dropdown (search and a per-app mood), and
+   a test button.
 7. Device: firmware/chip info, battery-optimisation exemption, and Forget
-   device (UNPAIR).
+   device (UNPAIR), which is only enabled while the bunny is connected.
 
 ### Android implementation notes (as built)
 
