@@ -125,19 +125,6 @@ class ServerCb : public BLEServerCallbacks {
 #endif
 };
 
-#if defined(CONFIG_NIMBLE_ENABLED)
-// True when the keys of this link's bond came from LE Secure Connections
-// pairing. NimBLE stores the bond before it reports the encryption change.
-static bool nbBondIsSc(const ble_gap_conn_desc *d)
-{
-  struct ble_store_key_sec key = {};
-  struct ble_store_value_sec sec = {};
-  key.peer_addr = d->peer_id_addr;
-  if (ble_store_read_our_sec(&key, &sec) == 0 && sec.sc) return true;
-  return ble_store_read_peer_sec(&key, &sec) == 0 && sec.sc;
-}
-#endif
-
 class SecurityCb : public BLESecurityCallbacks {
   uint32_t onPassKeyRequest() override { return 0; }
   void onPassKeyNotify(uint32_t) override {}
@@ -152,13 +139,7 @@ class SecurityCb : public BLESecurityCallbacks {
 #else
   void onAuthenticationComplete(ble_gap_conn_desc *desc, int status) override
   {
-    bool ok = status == 0 && desc && desc->sec_state.encrypted;
-    if (ok && !nbBondIsSc(desc)) { // legacy pairing: refuse it (the bond goes on the disconnect event)
-      log_w("legacy pairing refused");
-      ble_gap_terminate(desc->conn_handle, BLE_ERR_AUTH_FAIL);
-      ok = false;
-    }
-    nxAppOnEncrypted(ok);
+    nxAppOnEncrypted(status == 0 && desc && desc->sec_state.encrypted);
   }
 #endif
 };
@@ -535,10 +516,7 @@ bool nxBleBegin(const char *name)
   // (identity addresses) matches the owner's resolvable private address.
   esp_ble_gap_config_local_privacy(true);
 #else
-  // Not ble_hs_cfg.sm_sc_only: besides refusing legacy pairing it makes every
-  // encrypted attribute demand an authenticated (MITM) link, which Just Works
-  // never is, so INFO answered "insufficient authentication" and no phone
-  // could pair. Legacy pairing is refused in SecurityCb instead.
+  ble_hs_cfg.sm_sc_only = 1; // refuse legacy pairing
   if (ble_gap_event_listener_register(&nbListener, nbGapEvent, NULL) != 0) log_e("ANCS: GAP listener failed");
   // Bonded IRKs are loaded into the controller's resolving list by NimBLE itself.
 #endif

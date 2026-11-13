@@ -59,7 +59,7 @@ class _ShellState extends State<Shell> {
   @override
   Widget build(BuildContext context) {
     final pages = [
-      const HomeScreen(),
+      HomeScreen(onOpenLibrary: () => _go(1)),
       const LibraryScreen(),
       const NotificationsScreen(),
       const DeviceScreen(),

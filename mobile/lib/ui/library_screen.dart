@@ -100,12 +100,12 @@ class LibraryScreen extends StatelessWidget {
                 ),
               ),
             GridView.count(
-              crossAxisCount: 3,
+              crossAxisCount: 4,
               shrinkWrap: true,
               physics: const NeverScrollableScrollPhysics(),
               mainAxisSpacing: 8,
               crossAxisSpacing: 8,
-              childAspectRatio: 1.2,
+              childAspectRatio: 1,
               children: [for (var i = 0; i < Bunny.slots; i++) _SlotCell(slot: i)],
             ),
             const SizedBox(height: 4),
@@ -222,7 +222,6 @@ class _SlotCell extends StatelessWidget {
     final used = app.isUsed(slot);
     final active = app.activeSlot == slot;
     final enabled = app.connected;
-    final preview = used ? app.slotFaces[slot] : null;
     return Material(
       color: active ? NixxaColors.accentSoft : NixxaColors.surface2,
       shape: RoundedRectangleBorder(
@@ -240,40 +239,26 @@ class _SlotCell extends StatelessWidget {
         onLongPress: enabled ? () => _menu(context) : null,
         child: Padding(
           padding: const EdgeInsets.all(6),
-          child: Column(
-            children: [
-              Expanded(
-                child: Center(
-                  child: !used
-                      ? const Text('+', style: TextStyle(fontSize: 22, color: NixxaColors.text3))
-                      : preview != null
-                      ? AspectRatio(
-                          aspectRatio: 2,
-                          child: OledThumb(key: Key('slot-preview-$slot'), face: preview.face, drawing: preview.drawing),
-                        )
-                      : const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 1.5)),
+          child: FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Text(
+                  '${slot + 1}',
+                  style: TextStyle(fontSize: 11, color: active ? NixxaColors.accent : NixxaColors.text3),
                 ),
-              ),
-              const SizedBox(height: 4),
-              Row(
-                children: [
-                  Text(
-                    '${slot + 1}',
-                    style: TextStyle(fontSize: 10, color: active ? NixxaColors.accent : NixxaColors.text3),
-                  ),
-                  const SizedBox(width: 4),
-                  Expanded(
-                    child: Text(
-                      used ? (app.slotName(slot) ?? '') : 'empty',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(fontSize: 10, color: used ? NixxaColors.text : NixxaColors.text3),
-                    ),
-                  ),
-                  if (active) const Icon(Icons.circle, size: 7, color: NixxaColors.ok),
-                ],
-              ),
-            ],
+                const SizedBox(height: 4),
+                Text(
+                  used ? (app.slotName(slot) ?? '') : '+',
+                  maxLines: 2,
+                  textAlign: TextAlign.center,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: used ? 11 : 18, color: used ? NixxaColors.text : NixxaColors.text3),
+                ),
+                if (active) const Text('showing', style: TextStyle(fontSize: 9, color: NixxaColors.ok)),
+              ],
+            ),
           ),
         ),
       ),

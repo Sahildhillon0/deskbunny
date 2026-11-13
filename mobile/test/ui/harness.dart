@@ -8,16 +8,12 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:nixxa/app/app_state.dart';
 import 'package:nixxa/app/face_store.dart';
 import 'package:nixxa/app/preview.dart';
-import 'package:nixxa/app/widget_settings.dart';
 import 'package:nixxa/link/fake_device_link.dart';
 import 'package:nixxa/model/drawing.dart';
 import 'package:nixxa/model/face.dart';
 import 'package:nixxa/protocol/bunny.dart';
 import 'package:nixxa/ui/app.dart';
 import 'package:nixxa/ui/widgets/oled.dart';
-
-export '../fakes.dart';
-import '../fakes.dart';
 
 /// Lights one pixel per frame so painting is exercised; records calls.
 class FakePreview implements PreviewSource {
@@ -50,10 +46,7 @@ class Harness {
   final FakeDeviceLink link;
   final AppState app;
   final MemoryFaceStore store;
-  final FakeWidgetData data;
-  final FakePhoneApi phone;
-  final MemorySettingsStore settings;
-  Harness(this.link, this.app, this.store, this.data, this.phone, this.settings);
+  Harness(this.link, this.app, this.store);
 }
 
 /// Pumps the whole app on a phone-sized screen.
@@ -62,9 +55,6 @@ Future<Harness> pumpApp(
   bool paired = false,
   FakeDeviceLink? link,
   MemoryFaceStore? store,
-  FakeWidgetData? data,
-  FakePhoneApi? phone,
-  MemorySettingsStore? settings,
 }) async {
   OledPreview.animationsEnabled = false;
   tester.view.physicalSize = const Size(1080, 2340);
@@ -72,36 +62,22 @@ Future<Harness> pumpApp(
   addTearDown(tester.view.reset);
   final l = link ?? FakeDeviceLink(delay: Duration.zero, paired: paired);
   final s = store ?? MemoryFaceStore();
-  final d = data ?? FakeWidgetData();
-  final p = phone ?? FakePhoneApi();
-  final ws = settings ?? MemorySettingsStore();
   final app = AppState(
     link: l,
     bunny: Bunny(l),
     store: s,
     previewFactory: fakePreview,
     clockRenderer: fakeClocks,
-    widgetData: d,
-    phone: p,
-    settingsStore: ws,
   );
   await app.start();
   await tester.pumpWidget(NixxaApp(state: app));
   await tester.pumpAndSettle();
-  return Harness(l, app, s, d, p, ws);
+  return Harness(l, app, s);
 }
 
 /// Puts [face] into [slot] on the fake device, as the phone would.
 Future<void> seedSlot(FakeDeviceLink link, int slot, FaceDef face, [Drawing? drawing]) async {
   await link.request(BunnyOp.putSlot, Bunny.encodePutSlot(slot, face, drawing));
-}
-
-/// Home > Widgets > Clock.
-Future<void> openClock(WidgetTester tester) async {
-  await tester.tap(find.byKey(const Key('home-widgets')));
-  await tester.pumpAndSettle();
-  await tester.tap(find.byKey(const Key('widgets-clock')));
-  await tester.pumpAndSettle();
 }
 
 Future<void> goTab(WidgetTester tester, String label) async {

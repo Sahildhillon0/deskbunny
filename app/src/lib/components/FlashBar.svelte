@@ -302,11 +302,6 @@
     {/if}
   </div>
 
-  <button class="btn live-btn" onclick={() => (app.liveOpen = true)} title="Clock, Claude status and other live screens">
-    <Icon name="play" />
-    Live screens
-  </button>
-
   <button class="flash-btn" onclick={doFlash} disabled={!canFlash || !!boardsError}>
     <Icon name="bolt" />
     {flashing ? "Flashing…" : isEsp ? "Flash nixxa firmware" : "Flash to DeskBunny"}
@@ -316,7 +311,7 @@
 <style>
   .bar {
     display: grid;
-    grid-template-columns: minmax(200px, 280px) minmax(160px, 200px) minmax(0, 1fr) auto auto;
+    grid-template-columns: minmax(200px, 280px) minmax(160px, 200px) minmax(0, 1fr) auto;
     align-items: end;
     gap: 16px;
     padding: 12px 20px 16px;
@@ -553,11 +548,6 @@
     height: 26px;
     padding: 0 8px;
     font-size: 12px;
-  }
-
-  .live-btn {
-    height: 44px;
-    white-space: nowrap;
   }
 
   .flash-btn {

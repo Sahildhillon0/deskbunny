@@ -9,10 +9,6 @@
  *       one column per time (default 600 1400 2200 3000 ms).
  *   render blob <face> <out.bin>     encode a face to a 64-byte blob
  *   render blobhdr                   print firmware/deskbunny/db_default_blob.h
- *   render clawd <out.pbm> [t_ms...]
- *       Clawd sheet: one row per animation (with its usual expression), one
- *       column per time (default 0 250 500 750 1000 1250 1500 1750 ms), then
- *       one row with every expression standing idle at 1000 ms.
  *
  * <face> is a path to a 64-byte blob (*.bin) or a spec:
  *   mood[:overlay][+mouth][+cyclops][+invert][+rotate][+noblink][+nolook]
@@ -225,39 +221,6 @@ static int cmd_sheet(int argc, char **argv)
   return 0;
 }
 
-static int cmd_clawd(int argc, char **argv)
-{
-  static const uint8_t expr[DB_CLAWD_ANIM_COUNT] = {
-    DB_CLAWD_OPEN, DB_CLAWD_FOCUS, DB_CLAWD_HAPPY, DB_CLAWD_WORRIED, DB_CLAWD_CLOSED, DB_CLAWD_OPEN
-  };
-  long times[16] = { 0, 250, 500, 750, 1000, 1250, 1500, 1750 };
-  int nt = 8, cols, rows = DB_CLAWD_ANIM_COUNT + 1, a, k;
-  uint8_t fb[DB_FB_SIZE];
-  canvas_t c;
-  if (argc < 2) return 2;
-  if (argc > 2) {
-    nt = argc - 2 > 16 ? 16 : argc - 2;
-    for (k = 0; k < nt; k++) times[k] = atol(argv[2 + k]);
-  }
-  cols = nt > DB_CLAWD_EXPR_COUNT ? nt : DB_CLAWD_EXPR_COUNT;
-  if (canvas_new(&c, cols * (DB_W + 2) - 2, rows * (DB_H + 2) - 2)) return 1;
-  for (a = 0; a < DB_CLAWD_ANIM_COUNT; a++)
-    for (k = 0; k < nt; k++) {
-      db_clawd_render((uint8_t)a, expr[a], (uint32_t)times[k], fb);
-      blit(&c, fb, k * (DB_W + 2), a * (DB_H + 2));
-    }
-  for (k = 0; k < DB_CLAWD_EXPR_COUNT; k++) {
-    db_clawd_render(DB_CLAWD_IDLE, (uint8_t)k, 1000u, fb);
-    blit(&c, fb, k * (DB_W + 2), DB_CLAWD_ANIM_COUNT * (DB_H + 2));
-  }
-  for (a = 1; a < rows; a++) { hsep(&c, a * (DB_H + 2) - 2); hsep(&c, a * (DB_H + 2) - 1); }
-  for (k = 1; k < cols; k++) { vsep(&c, k * (DB_W + 2) - 2); vsep(&c, k * (DB_W + 2) - 1); }
-  if (write_pbm(argv[1], &c)) return 1;
-  printf("clawd %dx%d -> %s\n", c.w, c.h, argv[1]);
-  free(c.px);
-  return 0;
-}
-
 static int cmd_blob(int argc, char **argv)
 {
   db_face_t face;
@@ -292,7 +255,6 @@ int main(int argc, char **argv)
 {
   int rc = 2;
   if (argc >= 2 && strcmp(argv[1], "sheet") == 0) rc = cmd_sheet(argc - 1, argv + 1);
-  else if (argc >= 2 && strcmp(argv[1], "clawd") == 0) rc = cmd_clawd(argc - 1, argv + 1);
   else if (argc >= 2 && strcmp(argv[1], "blob") == 0) rc = cmd_blob(argc - 1, argv + 1);
   else if (argc == 2 && strcmp(argv[1], "blobhdr") == 0) rc = cmd_blobhdr();
   else if (argc == 6) rc = cmd_frames(argc, argv);

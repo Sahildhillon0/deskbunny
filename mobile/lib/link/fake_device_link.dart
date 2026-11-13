@@ -145,12 +145,10 @@ class FakeDeviceLink implements DeviceLink {
         final artLen = payload[65] | payload[66] << 8;
         if (payload.length != 67 + artLen) throw _devErr(2);
         if (artLen > 12285) throw _devErr(4);
-        // Keep face[64] + art, like the seeded default slot: GET_SLOT adds the length back.
-        _slots[slot] = Uint8List.fromList([...face, ...payload.sublist(67)]);
+        _slots[slot] = Uint8List.fromList(payload.sublist(1));
       case 0x12: // GET_SLOT
         final blob = payload.isEmpty ? null : _slots[payload[0]];
         if (blob == null) throw _devErr(3);
-        // Stored as face[64] + art; the reply is face[64] + artLen[2] + art.
         out
           ..add(blob.sublist(0, 64))
           ..add([(blob.length - 64) & 0xFF, (blob.length - 64) >> 8])

@@ -56,15 +56,6 @@
 #define DB_NATIVE_USB 0
 #endif
 
-// Clawd costs ~1.6 KB of flash; the 32u4 has no room for it next to a useful
-// drawing slot, so its live link answers "!C" with ERR (the app falls back to
-// the face) and "!V" with "LIVE 1" instead of "LIVE 1 C".
-#if defined(__AVR_ATmega32U4__)
-#define DB_LIVE_CLAWD 0
-#else
-#define DB_LIVE_CLAWD 1
-#endif
-
 // ---------------------------------------------------------------------------
 // The face blob. The desktop app finds the "DBFACE01" magic in the flashed
 // image and overwrites these 64 bytes, so it must exist exactly once, as real
@@ -85,9 +76,9 @@ __attribute__((used)) volatile const uint8_t DB_FACE_BLOB[DB_BLOB_SIZE] = DB_DEF
 // patches it. The slot takes whatever flash each chip has left; its size is in
 // header bytes 14..15 so the app knows how much fits.
 #if defined(__AVR_ATmega328P__)
-#define DB_ART_SLOT 5632u
+#define DB_ART_SLOT 8192u
 #elif defined(__AVR_ATmega32U4__)
-#define DB_ART_SLOT 3200u
+#define DB_ART_SLOT 4032u
 #elif defined(__AVR__)
 #define DB_ART_SLOT 32000u // Mega: one AVR object stays under 32 KB
 #else
@@ -527,25 +518,8 @@ static void showSplash()
 }
 
 // ---------------------------------------------------------------------------
-// Live link (docs/ARCHITECTURE.md): the desktop app drives the screen over
-// serial. Lines end in \n (\r is ignored); every command answers one line.
-// Thirty seconds without a command returns to the flashed face.
+// Serial: banner at boot and in reply to "?\n"
 // ---------------------------------------------------------------------------
-enum { LIVE_OFF = 0, LIVE_FACE, LIVE_CLAWD, LIVE_FRAME };
-static const uint32_t LIVE_TIMEOUT_MS = 30000;
-static const uint16_t LIVE_BYTE_MS = 200; // max gap inside a frame upload
-static const uint8_t CAPTION_MAX = 21;    // 6 px per glyph across 128 px
-
-static uint8_t liveMode;
-static uint8_t liveA, liveB;  // FACE: mood, overlay. CLAWD: anim, expr.
-static bool liveDirty;        // FRAME: fb changed, push it once
-static uint32_t liveLast;
-static char caption[CAPTION_MAX + 1];
-static char line[40];
-static uint8_t lineLen;
-static bool lineLong;
-static bool rxTimeout;
-
 static void printBanner()
 {
 #if DB_NATIVE_USB
@@ -555,145 +529,20 @@ static void printBanner()
   Serial.println(face.name);
 }
 
-// (Re)start the engine on f; the panel does invert/rotate180 in hardware.
-static void engineStart(const db_face_t *f, uint32_t seed)
+static void pollSerial()
 {
-  db_face_t drawFace = *f;
-  drawFace.flags &= (uint8_t)~(DB_FLAG_INVERT | DB_FLAG_ROTATE180);
-  db_engine_init(&engine, &drawFace, seed);
-}
-
-// Leaving live mode restarts the flashed face: a !M may have changed the
-// engine's face, even if a frame or Clawd was shown after it.
-static void liveHome()
-{
-  if (liveMode != LIVE_OFF) engineStart(&face, millis());
-  liveMode = LIVE_OFF;
-  artIdx = 0xFFFF; // the drawing restarts from frame 0
-}
-
-// Blocking read for db_art_frame; offsets arrive in order, so ignore them.
-static uint8_t rxByte(uint16_t)
-{
-  uint32_t t0 = millis();
-  while (Serial.available() <= 0) {
-    if ((uint16_t)(millis() - t0) > LIVE_BYTE_MS) {
-      rxTimeout = true;
-      return 0;
-    }
-  }
-  return (uint8_t)Serial.read();
-}
-
-// Unsigned decimal at *p, then one optional space; -1 when there is none.
-static int16_t parseNum(const char **p)
-{
-  int16_t v = -1;
-  while (**p >= '0' && **p <= '9' && v < 10000) v = (int16_t)((v < 0 ? 0 : v * 10) + (*(*p)++ - '0'));
-  if (**p == ' ') (*p)++;
-  return v;
-}
-
-static void reply(bool ok)
-{
-  Serial.println(ok ? F("OK") : F("ERR"));
-}
-
-// !F n: n bytes of PackBits onto a clear frame. !X n: XOR-ed onto the shown one.
-static bool liveFrame(bool xorDelta, int16_t n)
-{
-  if (n < 2 || n > 1200 || (xorDelta && liveMode != LIVE_FRAME)) return false;
-  Serial.println(F("K"));
-  if (!xorDelta) memset(fb, 0, sizeof(fb));
-  uint16_t pos = 0;
-  rxTimeout = false;
-  bool ok = db_art_frame(rxByte, (uint16_t)n, &pos, xorDelta ? DB_ART_XOR : DB_ART_OR, fb) == 0;
-  while (!rxTimeout && pos < (uint16_t)n) { rxByte(0); pos++; } // drain what the frame did not use
-  if (!ok || rxTimeout || pos != (uint16_t)n) {
-    liveHome(); // fb is half-written: show the face rather than garbage
-    return false;
-  }
-  liveMode = LIVE_FRAME;
-  liveDirty = true;
-  return true;
-}
-
-static void handleLine(uint32_t now)
-{
-  if (line[0] == '?' && line[1] == 0) { printBanner(); return; }
-  if (line[0] != '!' || line[1] == 0) return; // not for us: stay quiet
-  const char *p = line + 2;
-  if (*p == ' ') p++;
-  char cmd = line[1];
-  bool ok = true;
-  if (cmd == 'V') {
-#if DB_LIVE_CLAWD
-    Serial.println(F("LIVE 1 C"));
-#else
-    Serial.println(F("LIVE 1"));
-#endif
-    return;
-  } else if (cmd == 'P') {
-    ok = liveMode != LIVE_OFF;
-  } else if (cmd == 'H') {
-    liveHome();
-  } else if (cmd == 'M' || (cmd == 'C' && DB_LIVE_CLAWD)) {
-    int16_t a = parseNum(&p), b = parseNum(&p);
-    uint8_t mode = cmd == 'M' ? LIVE_FACE : LIVE_CLAWD;
-    if (a < 0 || b < 0 || a > 255 || b > 255) {
-      ok = false;
-    } else {
-      bool hadCaption = caption[0] != 0;
-      strncpy(caption, p, CAPTION_MAX);
-      caption[CAPTION_MAX] = 0;
-      // Re-init the face only when it changes, so a repeated command does
-      // not restart its blinks.
-      if (mode == LIVE_FACE && (liveMode != LIVE_FACE || liveA != a || liveB != b ||
-                                hadCaption != (caption[0] != 0))) {
-        db_face_t f = face;
-        f.mood = (uint8_t)a;
-        f.overlay = (uint8_t)b;
-        f.cycle = DB_CYCLE_OFF;
-        if (caption[0]) f.eye_y = (int8_t)(f.eye_y > -123 ? f.eye_y - 5 : -128);
-        engineStart(&f, now);
-      }
-      liveMode = mode;
-      liveA = (uint8_t)a;
-      liveB = (uint8_t)b;
-    }
-  } else if (cmd == 'F' || cmd == 'X') {
-    ok = liveFrame(cmd == 'X', parseNum(&p));
-  } else {
-    ok = false;
-  }
-  if (ok) liveLast = now;
-  reply(ok);
-}
-
-static void pollSerial(uint32_t now)
-{
+  static bool query = false;
   while (Serial.available() > 0) {
     int c = Serial.read();
-    if (c == '\r') continue;
-    if (c == '\n') {
-      line[lineLen] = 0;
-      if (!lineLong) handleLine(now);
-      lineLen = 0;
-      lineLong = false;
-    } else if (lineLen < sizeof(line) - 1) {
-      line[lineLen++] = (char)c;
+    if (c == '?') {
+      query = true;
+    } else if (c == '\n' || c == '\r') {
+      if (query) printBanner();
+      query = false;
     } else {
-      lineLong = true;
+      query = false;
     }
   }
-}
-
-// Caption on the bottom page (rows 56..63), over whatever is there.
-static void drawCaption()
-{
-  if (!caption[0]) return;
-  memset(fb + 7 * DB_W, 0, DB_W);
-  drawText(caption, 57, false);
 }
 
 #if DB_NATIVE_USB
@@ -727,38 +576,26 @@ void setup()
   oledApplyFace(&face);
   showSplash();
 
+  // The panel does invert/rotate180 in hardware; the engine draws upright.
+  db_face_t drawFace = face;
+  drawFace.flags &= (uint8_t)~(DB_FLAG_INVERT | DB_FLAG_ROTATE180);
   uint32_t now = millis();
-  engineStart(&face, now ^ ((uint32_t)analogRead(A0) << 16));
+  db_engine_init(&engine, &drawFace, now ^ ((uint32_t)analogRead(A0) << 16));
   lastFrame = now - FRAME_MS;
 }
 
 void loop()
 {
+  pollSerial();
   uint32_t now = millis();
-  pollSerial(now);
-  now = millis();
-  if (liveMode != LIVE_OFF && (uint32_t)(now - liveLast) > LIVE_TIMEOUT_MS) liveHome();
 #if DB_NATIVE_USB
   announceWhenConnected(now);
 #endif
   if ((uint32_t)(now - lastFrame) >= FRAME_MS) {
     lastFrame += FRAME_MS;
     if ((uint32_t)(now - lastFrame) >= FRAME_MS) lastFrame = now; // fell behind: resync
-    if (liveMode == LIVE_FRAME) {
-      if (!liveDirty) return; // a still frame: push it once
-      liveDirty = false;
-#if DB_LIVE_CLAWD
-    } else if (liveMode == LIVE_CLAWD) {
-      db_clawd_render(liveA, liveB, now, fb);
-      drawCaption();
-#endif
-    } else if (liveMode == LIVE_FACE) {
-      db_engine_render(&engine, now, fb);
-      drawCaption();
-    } else {
-      if (artMode != DB_ART_REPLACE) db_engine_render(&engine, now, fb);
-      if (artMode != DB_ART_OFF) artCompose(now);
-    }
+    if (artMode != DB_ART_REPLACE) db_engine_render(&engine, now, fb);
+    if (artMode != DB_ART_OFF) artCompose(now);
     oledPush(fb);
   }
 }

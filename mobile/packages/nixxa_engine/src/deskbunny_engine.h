@@ -166,36 +166,6 @@ void db_engine_init(db_engine_t *e, const db_face_t *face, uint32_t seed);
  * DB_FLAG_INVERT and DB_FLAG_ROTATE180 are applied to fb here. */
 void db_engine_render(db_engine_t *e, uint32_t now_ms, uint8_t fb[DB_FB_SIZE]);
 
-/* Clawd: the crab mascot of the Claude screen (live link, docs/ARCHITECTURE.md).
- * Stateless: the frame is a pure function of (anim, expr, now_ms). Clears fb
- * and draws above DB_CLAWD_GROUND, so rows below it stay free for a caption. */
-enum db_clawd_anim {
-  DB_CLAWD_IDLE = 0, /* stands, bobs, blinks */
-  DB_CLAWD_WALK,     /* walks left and right across the screen */
-  DB_CLAWD_JUMP,     /* hops with arms up and sparkles */
-  DB_CLAWD_SHAKE,    /* jitters with a question mark over its head */
-  DB_CLAWD_SLEEP,    /* sits with legs tucked, eyes shut, zzz */
-  DB_CLAWD_WORK,     /* stands still, arms tapping, eyes down */
-  DB_CLAWD_ANIM_COUNT
-};
-
-enum db_clawd_expr {
-  DB_CLAWD_OPEN = 0, /* tall eyes, blinks */
-  DB_CLAWD_HAPPY,    /* ^ ^ */
-  DB_CLAWD_CLOSED,   /* - - */
-  DB_CLAWD_WIDE,     /* big eyes with pupils, blinks */
-  DB_CLAWD_SQUINT,   /* > < */
-  DB_CLAWD_DEAD,     /* x x */
-  DB_CLAWD_WORRIED,  /* small eyes, raised inner brows, blinks */
-  DB_CLAWD_FOCUS,    /* tall eyes glancing left and right, blinks */
-  DB_CLAWD_EXPR_COUNT
-};
-
-#define DB_CLAWD_GROUND 55 /* first row below the feet */
-
-/* Unknown anim/expr values draw as IDLE/OPEN. */
-void db_clawd_render(uint8_t anim, uint8_t expr, uint32_t now_ms, uint8_t fb[DB_FB_SIZE]);
-
 #ifdef __cplusplus
 }
 #endif

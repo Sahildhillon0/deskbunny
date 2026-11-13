@@ -30,11 +30,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('iOS shares notifications with the bunny'), findsOneWidget);
 
-      // Bundle ID entry (inside the Apps dropdown): invalid input is refused,
-      // a valid one adds a shown rule.
-      await _scrollTo(tester, find.byKey(const Key('notif-apps')));
-      await tester.tap(find.byKey(const Key('notif-apps')));
-      await tester.pumpAndSettle();
+      // Bundle ID entry: invalid input is refused, a valid one adds a shown rule.
       final field = find.byKey(const Key('notif-bundle-id'));
       await _scrollTo(tester, field);
       await tester.enterText(field, 'not a bundle id');
@@ -54,7 +50,7 @@ void main() {
       await goTab(tester, 'Device');
       expect(find.byKey(const Key('device-ios-hint')), findsOneWidget);
       expect(find.byKey(const Key('device-battery')), findsNothing);
-      // Scroll to the iOS note at the bottom of the Device list.
+      // The device list is long now (clock row added): scroll to the iOS note.
       await tester.dragUntilVisible(
         find.textContaining('Forget This Device'),
         find.descendant(of: find.byType(DeviceScreen), matching: find.byType(Scrollable)),

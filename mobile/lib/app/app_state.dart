@@ -10,10 +10,7 @@ import '../model/drawing.dart';
 import '../model/face.dart';
 import '../protocol/bunny.dart';
 import 'face_store.dart';
-import 'phone_data.dart';
 import 'preview.dart';
-import 'widget_data.dart';
-import 'widget_settings.dart';
 
 const int opSetDnd = 0x23;
 
@@ -24,28 +21,14 @@ class AppState extends ChangeNotifier {
   final PreviewFactory previewFactory;
   final ClockRenderer clockRenderer;
 
-  /// Where the weather and air-quality widgets get their numbers.
-  final WidgetData widgetData;
-
-  /// What the phone knows (battery, calendar, the song) and where the widget
-  /// settings are kept. The background scheduler reads the same settings.
-  final PhoneApi phone;
-  final SettingsStore settingsStore;
-
   AppState({
     required this.link,
     Bunny? bunny,
     FaceStore? store,
     this.previewFactory = enginePreview,
     this.clockRenderer = engineClocks,
-    WidgetData? widgetData,
-    PhoneApi? phone,
-    SettingsStore? settingsStore,
   }) : bunny = bunny ?? Bunny(link),
-       store = store ?? PrefsFaceStore(),
-       widgetData = widgetData ?? OpenMeteo(),
-       phone = phone ?? ChannelPhoneApi(),
-       settingsStore = settingsStore ?? PrefsSettingsStore();
+       store = store ?? PrefsFaceStore();
 
   LinkStatus status = const LinkStatus(LinkState.unpaired);
 
@@ -58,27 +41,11 @@ class AppState extends ChangeNotifier {
   bool refreshing = false;
   String? refreshError;
 
-  /// What each used slot holds, for the Library previews. Filled in the
-  /// background after a refresh (one GET_SLOT per slot); a slot without an
-  /// entry yet shows its name only.
-  final Map<int, SavedFace> slotFaces = {};
-  bool _loadingPreviews = false;
-  bool _previewsDirty = false;
-
   List<SavedFace> saved = const [];
   NotifConfig? notifConfig;
 
   /// The clock the phone shows on the bunny: 0 = the face, 1..20 = a clock.
   int clockStyle = 0;
-
-  /// Everything the widgets remember (city, slots, auto-update, counter, ...).
-  WidgetSettings settings = const WidgetSettings();
-
-  /// What the background scheduler last did (read when the Widgets screen is open).
-  BgStatus bgStatus = const BgStatus();
-
-  GeoPlace? get place => settings.place;
-  bool get fahrenheit => settings.fahrenheit;
 
   StreamSubscription<LinkStatus>? _sub;
   bool _disposed = false;
@@ -90,7 +57,6 @@ class AppState extends ChangeNotifier {
     _sub = link.status.listen(_onStatus, onError: (Object _) {});
     unawaited(reloadSaved());
     unawaited(loadClock());
-    unawaited(loadWidgetSettings());
     try {
       _onStatus(await link.currentStatus());
     } on Object {
@@ -109,7 +75,6 @@ class AppState extends ChangeNotifier {
       device = null;
       slots = const [];
       activeFace = null;
-      slotFaces.clear();
     }
     _notify();
     if (s.state == LinkState.connected && !wasConnected) unawaited(refresh());
@@ -157,39 +122,6 @@ class AppState extends ChangeNotifier {
       refreshing = false;
       _notify();
     }
-    if (refreshError == null) unawaited(_loadSlotPreviews());
-  }
-
-  /// Reads every used slot we have no (current) copy of. Runs after the
-  /// refresh so the Home screen is never kept waiting on it.
-  Future<void> _loadSlotPreviews() async {
-    _previewsDirty = true;
-    if (_loadingPreviews) return;
-    _loadingPreviews = true;
-    try {
-      while (_previewsDirty) {
-        _previewsDirty = false;
-        slotFaces.removeWhere((slot, _) => !isUsed(slot));
-        final active = activeFace, d = device;
-        if (active != null && d != null) slotFaces[d.activeSlot] = active;
-        for (var i = 0; i < Bunny.slots; i++) {
-          if (_disposed || !connected) return;
-          if (!isUsed(i)) continue;
-          final have = slotFaces[i];
-          // The name comes from LIST_SLOTS, so a renamed slot is re-read.
-          if (have != null && have.face.name == slotName(i)) continue;
-          try {
-            final (face, drawing) = await bunny.getSlot(i);
-            slotFaces[i] = SavedFace(face, drawing);
-            _notify();
-          } on Object {
-            // Leave this slot as a name-only tile.
-          }
-        }
-      }
-    } finally {
-      _loadingPreviews = false;
-    }
   }
 
   Future<void> _loadActive() async {
@@ -235,7 +167,6 @@ class AppState extends ChangeNotifier {
 
   Future<void> deleteSlot(int slot) async {
     await bunny.deleteSlot(slot);
-    slotFaces.remove(slot);
     await refresh();
   }
 
@@ -245,7 +176,6 @@ class AppState extends ChangeNotifier {
   Future<void> sendFace(int slot, FaceDef face, Drawing? drawing) async {
     await bunny.putSlot(slot, face, drawing);
     await bunny.activate(slot);
-    slotFaces.remove(slot);
     await refresh();
   }
 
@@ -307,56 +237,6 @@ class AppState extends ChangeNotifier {
       _notify();
       rethrow;
     }
-  }
-
-  // ---------------------------------------------------------------- widgets
-
-  Future<void> loadWidgetSettings() async {
-    try {
-      settings = await settingsStore.load();
-      bgStatus = await settingsStore.loadStatus();
-    } on Object {
-      // No stored settings: start with the defaults.
-    }
-    _notify();
-  }
-
-  /// Applies [change] at once and writes the result to storage in the
-  /// background, so a slow disk never holds the screen up.
-  void updateSettings(WidgetSettings Function(WidgetSettings s) change) {
-    settings = change(settings);
-    _notify();
-    unawaited(settingsStore.save(settings));
-  }
-
-  Future<void> refreshBgStatus() async {
-    try {
-      final st = await settingsStore.loadStatus();
-      bgStatus = st;
-      _notify();
-    } on Object {
-      // keep the last one
-    }
-  }
-
-  void setPlace(GeoPlace p) => updateSettings((s) => s.copyWith(place: p));
-
-  void setFahrenheit(bool on) => updateSettings((s) => s.copyWith(fahrenheit: on));
-
-  /// Remember which slot a widget lives in. A slot belongs to one widget:
-  /// whichever widget had it before loses it (and its place in the rotation).
-  void assignSlot(String id, int slot) => updateSettings((s) {
-    final slots = {for (final e in s.slots.entries) if (e.value != slot) e.key: e.value, id: slot};
-    final rotation = {for (final r in s.rotation) if (slots.containsKey(r)) r};
-    return s.copyWith(slots: slots, rotation: rotation);
-  });
-
-  /// Which widget (if any) holds [slot].
-  String? widgetInSlot(int slot) {
-    for (final e in settings.slots.entries) {
-      if (e.value == slot) return e.key;
-    }
-    return null;
   }
 
   Future<void> saveNotifConfig(NotifConfig c) async {

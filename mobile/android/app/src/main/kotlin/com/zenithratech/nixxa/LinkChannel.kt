@@ -21,15 +21,8 @@ import java.io.ByteArrayOutputStream
 import java.util.concurrent.Executors
 
 /** MethodChannel `nixxa/link` + EventChannel `nixxa/link/status` (ARCHITECTURE.md channel table). */
-class LinkChannel(
-    context: android.content.Context,
-    messenger: BinaryMessenger,
-    /** Null in the background engine the link service hosts: no screen to ask permissions on. */
-    private val activity: MainActivity?,
-    private val startService: Boolean = true,
-) : MethodChannel.MethodCallHandler {
-    private val ctx = context.applicationContext
-    private val ui = android.os.Handler(android.os.Looper.getMainLooper())
+class LinkChannel(private val activity: MainActivity, messenger: BinaryMessenger) : MethodChannel.MethodCallHandler {
+    private val ctx = activity.applicationContext
     private val methods = MethodChannel(messenger, "nixxa/link")
     private val events = EventChannel(messenger, "nixxa/link/status")
     private var statusListener: ((Link.Status) -> Unit)? = null
@@ -51,13 +44,7 @@ class LinkChannel(
                 statusListener = null
             }
         })
-        if (startService && Link.isPaired()) NixxaLinkService.start(ctx)
-    }
-
-    /** Opens a settings screen: from the app's activity, or from the background as a new task. */
-    private fun launch(i: Intent) {
-        val a = activity
-        if (a != null) a.startActivity(i) else ctx.startActivity(i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        if (Link.isPaired()) NixxaLinkService.start(ctx)
     }
 
     fun dispose() {
@@ -72,8 +59,7 @@ class LinkChannel(
             "status" -> result.success(Link.status.toMap())
             "pair" -> {
                 val qr = call.argument<String>("qr") ?: return result.error("BAD_QR", "Missing QR text", null)
-                val a = activity ?: return result.error("PERMISSION", "Pairing needs the app on screen", null)
-                a.requestLinkPermissions { granted ->
+                activity.requestLinkPermissions { granted ->
                     if (!granted) {
                         result.error("PERMISSION", "Nearby devices (Bluetooth) permission is needed to pair", null)
                     } else {
@@ -113,9 +99,9 @@ class LinkChannel(
                     Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
                 }
                 try {
-                    launch(i)
+                    activity.startActivity(i)
                 } catch (_: Exception) {
-                    launch(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+                    activity.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
                 }
                 result.success(null)
             }
@@ -124,16 +110,18 @@ class LinkChannel(
                 if (!pm.isIgnoringBatteryOptimizations(ctx.packageName)) {
                     try {
                         @Suppress("BatteryLife")
-                        launch(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:${ctx.packageName}")))
+                        activity.startActivity(
+                            Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:${ctx.packageName}")),
+                        )
                     } catch (_: Exception) {
-                        launch(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+                        activity.startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
                     }
                 }
                 result.success(null)
             }
             "listApps" -> io.execute {
                 val apps = try { listApps() } catch (e: Exception) { emptyList() }
-                ui.post { result.success(apps) }
+                activity.runOnUiThread { result.success(apps) }
             }
             "sendTestNotification" -> {
                 val payload = Proto.notify(
