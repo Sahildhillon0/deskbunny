@@ -17,6 +17,8 @@
     ScreenCfg,
     ScreenRef,
     WeatherNow,
+    UsageHarness,
+    UsageNow,
   } from "../types";
   import Icon from "./Icon.svelte";
   import Switch from "./Switch.svelte";
@@ -47,6 +49,9 @@
   let heading = $state<HTMLHeadingElement | null>(null);
   let canvas = $state<HTMLCanvasElement | null>(null);
   let hooks = $state<HooksStatus | null>(null);
+  let harnesses = $state<UsageHarness[]>([]);
+  let usage = $state<UsageNow | null>(null);
+  const harness = $derived(harnesses.find((h) => h.id === cfg?.usage.harness) ?? null);
   let hooksBusy = $state(false);
   let claude = $state<ClaudeView | null>(null);
   let ignoreText = $state("");
@@ -199,14 +204,16 @@
     let unlisten: (() => void) | null = null;
     (async () => {
       try {
-        const [c, s, p, d, cat] = await Promise.all([
+        const [c, s, p, d, cat, hs] = await Promise.all([
           api.liveGetConfig(),
           api.liveStatus(),
           api.listPorts(),
           api.designList(),
           api.designCatalog(),
+          api.usageHarnesses(),
         ]);
         if (dead) return;
+        harnesses = hs;
         ports = p;
         designs = d;
         templates = cat.templates;
@@ -237,6 +244,7 @@
     const slowTimer = setInterval(async () => {
       claude = await api.claudeView().catch(() => claude);
       weather = await api.weatherNow().catch(() => weather);
+      usage = await api.usageNow().catch(() => usage);
     }, 1000);
     const timer = setInterval(async () => {
       if (!canvas || busy || preview.kind === "face") return;
@@ -442,6 +450,34 @@
                 : ""}
             {:else if weather?.error}<span class="err">{weather.error}</span>
             {:else}Fetching…{/if}
+          </p>
+        </section>
+
+        <section class="group" aria-labelledby="usage-h">
+          <h2 id="usage-h">AI usage</h2>
+          <p class="muted small">
+            Your plan's 5-hour and weekly usage for the chosen tool. Designs show it with <code>{"{U5H}"}</code>,
+            <code>{"{UWK}"}</code>, <code>{"{U5HIN}"}</code>, <code>{"{UWKIN}"}</code> and <code>{"{USRC}"}</code>; the built-in
+            "AI usage" screen uses them.
+          </p>
+          <div class="row">
+            <label class="label" for="usage-harness">Show usage for</label>
+            <select
+              id="usage-harness"
+              class="select"
+              value={cfg.usage.harness}
+              onchange={(e) => update((c) => (c.usage.harness = (e.currentTarget as HTMLSelectElement).value))}
+            >
+              {#each harnesses as h (h.id)}<option value={h.id}>{h.name}</option>{/each}
+            </select>
+          </div>
+          <p class="muted small" aria-live="polite">
+            {#if usage && usage.ageSecs !== null}
+              5-hour <b>{usage.usage.five ?? "--"}%</b> (resets in {usage.usage.fiveIn}), weekly
+              <b>{usage.usage.week ?? "--"}%</b> (resets in {usage.usage.weekIn}) · reported {usage.ageSecs < 60
+                ? "just now"
+                : `${Math.round(usage.ageSecs / 60)} min ago`}
+            {:else if harness}No report yet. {harness.setup}{/if}
           </p>
         </section>
 

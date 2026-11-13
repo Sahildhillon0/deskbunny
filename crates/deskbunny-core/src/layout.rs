@@ -184,6 +184,25 @@ pub struct Ctx<'a> {
     pub weather: Option<&'a Weather>,
     /// The Claude screen's caption (`EDIT main.rs`).
     pub claude: &'a str,
+    /// AI plan usage, for the `{U5H}`-style tokens (None: no harness chosen).
+    pub usage: Option<&'a Usage>,
+}
+
+/// AI plan usage windows as the screen shows them (the app works out the
+/// "resets in" text, so this crate needs no clock).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Usage {
+    /// The harness, short and upper case (`CLAUDE`).
+    pub source: String,
+    /// 5-hour window, percent used.
+    pub five: Option<u8>,
+    /// Time until the 5-hour window resets: `2H15M`, `45M`, `--`.
+    pub five_in: String,
+    /// Weekly window, percent used.
+    pub week: Option<u8>,
+    /// Time until the weekly window resets: `3D4H`, `--`.
+    pub week_in: String,
 }
 
 const DAYS: [&str; 7] = ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"];
@@ -246,6 +265,11 @@ pub const TOKENS: &[(&str, &str)] = &[
     ("PM25", "PM2.5 µg/m³"),
     ("PM10", "PM10 µg/m³"),
     ("CLAUDE", "Claude status"),
+    ("USRC", "usage: harness (CLAUDE)"),
+    ("U5H", "usage: 5-hour window %"),
+    ("U5HIN", "5-hour resets in (2H15M)"),
+    ("UWK", "usage: weekly window %"),
+    ("UWKIN", "weekly resets in (3D4H)"),
 ];
 
 /// Condition text and icon name for a WMO weather code.
@@ -314,6 +338,24 @@ fn token(name: &str, c: &Ctx) -> Option<String> {
         "PM25" => wx(&|w| w.pm25.map_or_else(|| "--".into(), |v| format!("{v:.0}"))),
         "PM10" => wx(&|w| w.pm10.map_or_else(|| "--".into(), |v| format!("{v:.0}"))),
         "CLAUDE" => Some(c.claude.to_string()),
+        "USRC" => Some(c.usage.map_or_else(|| "--".into(), |u| u.source.clone())),
+        "U5H" | "UWK" => {
+            let p = c
+                .usage
+                .and_then(|u| if name == "U5H" { u.five } else { u.week });
+            Some(p.map_or_else(|| "--".into(), |p| p.to_string()))
+        }
+        "U5HIN" | "UWKIN" => Some(c.usage.map_or_else(
+            || "--".into(),
+            |u| {
+                if name == "U5HIN" {
+                    &u.five_in
+                } else {
+                    &u.week_in
+                }
+                .clone()
+            },
+        )),
         _ => None,
     }
 }
@@ -892,6 +934,33 @@ pub fn templates() -> Vec<Design> {
             ],
         },
         Design {
+            id: "usage".into(),
+            name: "AI usage".into(),
+            elements: vec![
+                text(0, 4, "{USRC} USAGE", Small, 1, Left),
+                text(0, 19, "5H {U5H}%", Small, 1, Left),
+                text(127, 19, "{U5HIN}", Small, 1, Right),
+                Element::Bar {
+                    x: 0,
+                    y: 28,
+                    w: 128,
+                    h: 6,
+                    value: "{U5H}".into(),
+                    max: "100".into(),
+                },
+                text(0, 41, "WEEK {UWK}%", Small, 1, Left),
+                text(127, 41, "{UWKIN}", Small, 1, Right),
+                Element::Bar {
+                    x: 0,
+                    y: 50,
+                    w: 128,
+                    h: 6,
+                    value: "{UWK}".into(),
+                    max: "100".into(),
+                },
+            ],
+        },
+        Design {
             id: "minimal".into(),
             name: "Minimal".into(),
             elements: vec![
@@ -919,6 +988,7 @@ mod tests {
             year: 2026,
             weather: w,
             claude: "EDIT main.rs",
+            usage: None,
         }
     }
 
@@ -955,6 +1025,25 @@ mod tests {
             "28C CLEAR sun PUNE"
         );
         assert_eq!(expand("{CLAUDE}", &c), "EDIT main.rs");
+        assert_eq!(
+            expand("{USRC} {U5H}% {U5HIN} {UWK}% {UWKIN}", &c),
+            "-- --% -- --% --"
+        );
+        let u = Usage {
+            source: "CLAUDE".into(),
+            five: Some(42),
+            five_in: "2H15M".into(),
+            week: Some(7),
+            week_in: "3D4H".into(),
+        };
+        let c = Ctx {
+            usage: Some(&u),
+            ..c
+        };
+        assert_eq!(
+            expand("{USRC} {U5H}% {U5HIN} {UWK}% {UWKIN}", &c),
+            "CLAUDE 42% 2H15M 7% 3D4H"
+        );
         assert_eq!(
             expand("{AQI} {AQICAT} {PM25}/{PM10} {AQIMAX}", &c),
             "99 MODERATE 25/33 300"
