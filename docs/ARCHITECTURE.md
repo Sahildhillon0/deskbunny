@@ -411,7 +411,11 @@ breakpoints, the highest sub-index wins; it needs PM2.5 or PM10 and three
 pollutants. The last band's top (no CPCB value) is taken as PM10 600, PM2.5
 380, NO2 800, SO2 2100, CO 50 mg/m³, O3 1000. Categories: GOOD, SATISFACTORY,
 MODERATE, POOR, VERY POOR, SEVERE. `{AQIMAX}` is 300 (US), 100 (EU), 400 (IN).
-Fetched when the place or units change, every 15 min, 2 min after a failure.
+Fetched when the place or units change, every 15 min, 2 min after a failure,
+timed by the wall clock (so a PC waking from suspend fetches at once). Day or
+night (`isDay`, sun or moon icon) follows today's and tomorrow's sunrise and
+sunset from the forecast, checked at render time; Open-Meteo's `is_day` is the
+fallback.
 - `weather_search(query) -> Place[]` (geocoding, up to 8; under 2 characters
   returns none).
 - `weather_now() -> { weather: Weather|null, error, ageSecs }`, `Weather = {
@@ -426,7 +430,30 @@ so web pages cannot post here. JSON replies, `{"ok": true}` or `{"error"}`.
   on stdin (needs `session_id` and `hook_event_name`).
 - `POST /notify`: `{"title", "body"?, "app"?}`, or plain text (first line =
   title, the rest = body). `tools/deskbunny-notify TITLE [BODY] [APP]` wraps it.
-- `GET /status`: `{ claude: ClaudeView, live: LiveStatus }`.
+- `POST /usage`: an AI harness's plan usage; see "AI usage" below.
+- `GET /status`: `{ claude: ClaudeView, usage: UsageNow, live: LiveStatus }`.
+
+AI usage (`usage.rs`). A plan's 5-hour and weekly usage for one AI coding
+harness, chosen in the settings (`LiveConfig.usage = { harness }`, default
+`claude`). Harnesses are a registry (`HARNESSES`: id, name, `short` for
+`{USRC}`, setup hint); only Claude Code is supported so far. Each harness
+reports to `POST /usage`; the app keeps the newest report per harness, in
+memory only. Bodies:
+- neutral: `{"source": "<id>", "five_hour": {"used": 42, "resets_at": unix},
+  "week": {...}}` (either window may be missing; unknown sources are refused);
+- Claude Code: its status line payload, or just `rate_limits`
+  (`five_hour` / `seven_day`, each `{ used_percentage, resets_at }`). Claude
+  Code hands these only to the status line command, so that command forwards
+  its stdin: `curl -s -m 0.3 -H 'X-DeskBunny: 1' --data-binary @-
+  http://127.0.0.1:47807/usage`.
+Adding a harness: a `HARNESSES` entry, and either the neutral body or an
+adapter in `usage::parse`. Tokens (for the chosen harness): `{USRC}` name,
+`{U5H}` / `{UWK}` percent used, `{U5HIN}` / `{UWKIN}` time to reset (`2H15M`,
+`45M`, `3D4H`); `--` until the first report. A window past its reset time
+shows 0%. Template: "AI usage" (`usage`), a bar per window.
+- `usage_harnesses() -> { id, name, short, setup }[]`.
+- `usage_now() -> { harness, usage: Usage, ageSecs|null }`, `Usage = { source,
+  five, fiveIn, week, weekIn }`.
 
 Claude screen (`claude.rs`). The hooks (installed by `claude_hooks_install`
 into `~/.claude/settings.json`, entries marked by the `X-DeskBunny` header in

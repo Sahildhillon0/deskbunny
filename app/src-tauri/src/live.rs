@@ -92,6 +92,8 @@ pub struct LiveConfig {
     pub claude_hold: bool,
     pub notify: NotifyCfg,
     pub weather: crate::weather::WeatherCfg,
+    /// Which AI harness the usage screen shows.
+    pub usage: crate::usage::UsageCfg,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -169,6 +171,7 @@ impl Default for LiveConfig {
             claude_hold: true,
             notify: NotifyCfg::default(),
             weather: Default::default(),
+            usage: Default::default(),
         }
     }
 }
@@ -178,6 +181,7 @@ impl LiveConfig {
     /// disabled), each design at most once (a design entry without an id is
     /// the old clock), first entry wins; dwell times clamped; empty port = none.
     pub fn sanitized(mut self) -> LiveConfig {
+        self.usage = self.usage.sanitized();
         let mut out: Vec<ScreenCfg> = Vec::new();
         for mut s in self.screens.drain(..) {
             match s.kind {
@@ -268,6 +272,8 @@ pub struct Live {
     designs: Mutex<Vec<Design>>,
     designs_path: Option<PathBuf>,
     weather: Mutex<crate::weather::WeatherNow>,
+    /// The newest AI plan usage report per harness.
+    usage: Mutex<crate::usage::Reports>,
     cv: Condvar,
     config_path: Option<PathBuf>,
 }
@@ -415,6 +421,31 @@ impl Live {
             .clone()
     }
 
+    /// Take a `POST /usage` body (see `usage::parse`).
+    pub fn usage_event(&self, body: &serde_json::Value) -> Result<&'static str, String> {
+        let r = self
+            .usage
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .take(body, Local::now().timestamp());
+        self.cv.notify_all();
+        r
+    }
+
+    /// The chosen harness's usage as the screen shows it now.
+    pub fn usage_now(&self) -> crate::usage::UsageNow {
+        let id = self.config().usage.harness;
+        let h = crate::usage::harness(&id).unwrap_or(&crate::usage::HARNESSES[0]);
+        let now = Local::now().timestamp();
+        let reports = self.usage.lock().unwrap_or_else(|p| p.into_inner());
+        let r = reports.get(h.id);
+        crate::usage::UsageNow {
+            harness: h.id,
+            usage: crate::usage::view(h, r, now),
+            age_secs: r.map(|r| (now - r.at).max(0) as u64),
+        }
+    }
+
     pub fn set_weather(&self, w: crate::weather::WeatherNow) {
         *self.weather.lock().unwrap_or_else(|p| p.into_inner()) = w;
         self.cv.notify_all();
@@ -432,13 +463,15 @@ impl Live {
     /// Render `d` as the board would show it now.
     pub fn render_design(&self, d: &Design) -> ([u8; FB_SIZE], Vec<layout::Bounds>) {
         let t = Local::now();
-        let w = self.weather_now().weather;
+        let w = self.weather_now().current();
+        let u = self.usage_now().usage;
         let v = self.claude_view();
         let ctx = layout::Ctx {
             time: clock_of(&t),
             year: t.year().clamp(0, 9999) as u16,
             weather: w.as_ref(),
             claude: &v.caption,
+            usage: Some(&u),
         };
         layout::render(d, &ctx)
     }
@@ -514,6 +547,7 @@ pub fn start(app: &AppHandle) -> Arc<Live> {
         designs: Mutex::new(load_designs(designs_path.as_ref())),
         designs_path,
         weather: Mutex::new(Default::default()),
+        usage: Mutex::new(Default::default()),
         cv: Condvar::new(),
         config_path: path,
     });

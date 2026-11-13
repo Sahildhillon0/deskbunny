@@ -4,7 +4,7 @@
 // C engine over IPC. Never import this directly: go through ./api.ts.
 
 import { composeDrawing } from "./drawing";
-import { MOODS, defaultFace, normalizeFace, sanitizeName, type Board, type FaceDef, type FlashProgress, type FlashReport, type ClaudeView, type Design, type DesignCatalog, type DesignRender, type HooksStatus, type LiveConfig, type LiveStatus, type Mood, type Place, type Port, type ScreenRef, type WeatherNow, type SetupStatus, type UpdateInfo, type UpdateProgress } from "./types";
+import { MOODS, defaultFace, normalizeFace, sanitizeName, type Board, type FaceDef, type FlashProgress, type FlashReport, type ClaudeView, type Design, type DesignCatalog, type DesignRender, type HooksStatus, type LiveConfig, type LiveStatus, type Mood, type Place, type Port, type ScreenRef, type WeatherNow, type UsageHarness, type UsageNow, type SetupStatus, type UpdateInfo, type UpdateProgress } from "./types";
 
 const delay = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
@@ -677,6 +677,7 @@ let liveCfg: LiveConfig = {
   claudeHold: true,
   weather: { place: null, units: "metric", aqi: "us" },
   notify: { enabled: true, desktop: true, seconds: 8, showBody: false, ignoreApps: [] },
+  usage: { harness: "claude" },
 };
 let liveStat: LiveStatus = { state: "off", port: null, banner: null, clawd: false, screen: null, pinned: null, message: null };
 const liveListeners = new Set<(s: LiveStatus) => void>();
@@ -813,6 +814,11 @@ export async function designCatalog(): Promise<DesignCatalog> {
       ["PM25", "PM2.5 µg/m³"],
       ["PM10", "PM10 µg/m³"],
       ["CLAUDE", "Claude status"],
+      ["USRC", "usage: harness (CLAUDE)"],
+      ["U5H", "usage: 5-hour window %"],
+      ["U5HIN", "5-hour resets in (2H15M)"],
+      ["UWK", "usage: weekly window %"],
+      ["UWKIN", "weekly resets in (3D4H)"],
     ],
     icons: ["sun", "moon", "cloud", "rain", "bell", "heart"],
   };
@@ -864,6 +870,26 @@ export async function designRender(d: Design): Promise<DesignRender> {
     }
   }
   return { frame: fb, bounds };
+}
+
+export async function usageHarnesses(): Promise<UsageHarness[]> {
+  return [
+    {
+      id: "claude",
+      name: "Claude Code",
+      short: "CLAUDE",
+      setup:
+        "Claude Code gives the 5-hour and weekly usage only to its status line. Have your status line command forward its input: curl -s -m 0.3 -H 'X-DeskBunny: 1' --data-binary @- http://127.0.0.1:47807/usage",
+    },
+  ];
+}
+
+export async function usageNow(): Promise<UsageNow> {
+  return {
+    harness: liveCfg.usage.harness,
+    usage: { source: "CLAUDE", five: 42, fiveIn: "2H15M", week: 18, weekIn: "3D4H" },
+    ageSecs: 40,
+  };
 }
 
 export async function weatherSearch(q: string): Promise<Place[]> {

@@ -11,6 +11,7 @@ mod live;
 mod server;
 mod setup;
 mod update;
+mod usage;
 mod weather;
 
 use std::collections::HashMap;
@@ -701,11 +702,19 @@ async fn weather_search(query: String) -> CmdResult<Vec<weather::Place>> {
 #[tauri::command]
 fn weather_now(live: State<Arc<live::Live>>) -> weather::WeatherNow {
     let mut w = live.weather_now();
-    w.age_secs = w
-        .fetched
-        .filter(|_| w.weather.is_some())
-        .map(|t| t.elapsed().as_secs());
+    w.age_secs = w.age().filter(|_| w.weather.is_some()).map(|a| a.as_secs());
+    w.weather = w.current();
     w
+}
+
+#[tauri::command]
+fn usage_harnesses() -> Vec<usage::Harness> {
+    usage::HARNESSES.to_vec()
+}
+
+#[tauri::command]
+fn usage_now(live: State<Arc<live::Live>>) -> usage::UsageNow {
+    live.usage_now()
 }
 
 #[tauri::command]
@@ -858,6 +867,8 @@ pub fn run() {
             design_render,
             weather_search,
             weather_now,
+            usage_harnesses,
+            usage_now,
         ])
         .run(tauri::generate_context!())
         .expect("error while running DeskBunny");

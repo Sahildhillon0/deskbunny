@@ -4,7 +4,7 @@
 //! docs/ARCHITECTURE.md, "Weather".
 
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use deskbunny_core::layout::Weather;
 use serde::{Deserialize, Serialize};
@@ -68,8 +68,15 @@ pub struct WeatherNow {
     pub error: Option<String>,
     /// Seconds since the last successful update (filled in on read).
     pub age_secs: Option<u64>,
+    /// Wall-clock time of the last fetch. Not `Instant`: on Linux that clock
+    /// stops while the PC is suspended, so after a night asleep the reading
+    /// from last evening looked minutes old and was kept.
     #[serde(skip)]
-    pub fetched: Option<Instant>,
+    pub fetched: Option<SystemTime>,
+    /// Sunrise and sunset (unix seconds) for today and tomorrow: day or night
+    /// flips on time between fetches.
+    #[serde(skip)]
+    pub sun: Vec<(i64, i64)>,
     #[serde(skip)]
     pub for_cfg: Option<WeatherCfg>,
 }
@@ -124,7 +131,70 @@ fn parse_places(v: &Value) -> Vec<Place> {
         .collect()
 }
 
-pub fn fetch(cfg: &WeatherCfg) -> Result<Weather, String> {
+impl WeatherNow {
+    /// The weather with day/night as of now (from sunrise and sunset when
+    /// known, else Open-Meteo's `is_day` at the last fetch).
+    pub fn current(&self) -> Option<Weather> {
+        let mut w = self.weather.clone()?;
+        if let Some(day) = is_day_at(&self.sun, unix_now()) {
+            w.is_day = day;
+        }
+        Some(w)
+    }
+
+    /// Time since the last fetch; a clock set backwards counts as long ago.
+    pub fn age(&self) -> Option<Duration> {
+        self.fetched.map(|t| t.elapsed().unwrap_or(Duration::MAX))
+    }
+}
+
+fn unix_now() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs() as i64)
+}
+
+/// Day or night at `now` from (sunrise, sunset) pairs; None when there are
+/// none, or `now` is past the last sunrise the answer covers.
+fn is_day_at(sun: &[(i64, i64)], now: i64) -> Option<bool> {
+    let last = sun.last()?;
+    if now >= last.0 + 24 * 3600 {
+        return None;
+    }
+    Some(sun.iter().any(|&(rise, set)| rise <= now && now < set))
+}
+
+/// `daily.sunrise` / `daily.sunset` (local "YYYY-MM-DDTHH:MM" at the place,
+/// `utc_offset_seconds` from UTC) as unix seconds.
+fn parse_sun(v: &Value) -> Vec<(i64, i64)> {
+    let offset = v
+        .get("utc_offset_seconds")
+        .and_then(Value::as_i64)
+        .unwrap_or(0);
+    let list = |k: &str| -> Vec<Option<i64>> {
+        v.get("daily")
+            .and_then(|d| d.get(k))
+            .and_then(Value::as_array)
+            .map(|a| {
+                a.iter()
+                    .map(|x| {
+                        let t =
+                            chrono::NaiveDateTime::parse_from_str(x.as_str()?, "%Y-%m-%dT%H:%M")
+                                .ok()?;
+                        Some(t.and_utc().timestamp() - offset)
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    list("sunrise")
+        .into_iter()
+        .zip(list("sunset"))
+        .filter_map(|(r, s)| Some((r?, s?)))
+        .collect()
+}
+
+pub fn fetch(cfg: &WeatherCfg) -> Result<(Weather, Vec<(i64, i64)>), String> {
     let place = cfg.place.as_ref().ok_or("No place chosen.")?;
     let (lat, lon) = (place.lat.to_string(), place.lon.to_string());
     let mut q = vec![
@@ -134,9 +204,13 @@ pub fn fetch(cfg: &WeatherCfg) -> Result<Weather, String> {
             "current",
             "temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m,is_day",
         ),
-        ("daily", "temperature_2m_max,temperature_2m_min"),
+        // Index 0 is today; tomorrow's sunrise covers the night after midnight.
+        (
+            "daily",
+            "temperature_2m_max,temperature_2m_min,sunrise,sunset",
+        ),
         ("timezone", "auto"),
-        ("forecast_days", "1"),
+        ("forecast_days", "2"),
     ];
     if cfg.units == Units::Imperial {
         q.push(("temperature_unit", "fahrenheit"));
@@ -144,6 +218,7 @@ pub fn fetch(cfg: &WeatherCfg) -> Result<Weather, String> {
     }
     let v = get("https://api.open-meteo.com/v1/forecast", &q)?;
     let mut w = parse_forecast(&v, place, cfg.units)?;
+    let sun = parse_sun(&v);
     // Air quality is a separate service; without it the weather still shows.
     let air = get(
         "https://air-quality-api.open-meteo.com/v1/air-quality",
@@ -164,7 +239,7 @@ pub fn fetch(cfg: &WeatherCfg) -> Result<Weather, String> {
         Ok(a) => apply_air(&mut w, &a, cfg.aqi),
         Err(e) => log::warn!("air quality: {e}"),
     }
-    Ok(w)
+    Ok((w, sun))
 }
 
 // --- India's National AQI (CPCB) ------------------------------------------
@@ -328,18 +403,19 @@ pub fn start(live: Arc<Live>) {
             let now = live.weather_now();
             let changed = now.for_cfg.as_ref() != Some(&cfg);
             let wait = if now.error.is_some() { RETRY } else { REFRESH };
-            let due = now.fetched.is_none_or(|t| t.elapsed() >= wait);
+            let due = now.age().is_none_or(|a| a >= wait);
             if cfg.place.is_none() {
                 if now.weather.is_some() || now.error.is_some() {
                     live.set_weather(WeatherNow::default());
                 }
             } else if changed || due {
                 let next = match fetch(&cfg) {
-                    Ok(w) => WeatherNow {
+                    Ok((w, sun)) => WeatherNow {
                         weather: Some(w),
                         error: None,
                         age_secs: None,
-                        fetched: Some(Instant::now()),
+                        fetched: Some(SystemTime::now()),
+                        sun,
                         for_cfg: Some(cfg),
                     },
                     Err(e) => {
@@ -347,9 +423,10 @@ pub fn start(live: Arc<Live>) {
                         WeatherNow {
                             // Keep showing the last reading for the same place.
                             weather: if changed { None } else { now.weather },
+                            sun: if changed { Vec::new() } else { now.sun },
                             error: Some(e),
                             age_secs: None,
-                            fetched: Some(Instant::now()),
+                            fetched: Some(SystemTime::now()),
                             for_cfg: Some(cfg),
                         }
                     }
@@ -392,6 +469,29 @@ mod tests {
         );
         assert!((w.tmax - 31.2).abs() < 0.01 && w.is_day);
         assert!(parse_forecast(&json!({}), &places[0], Units::Metric).is_err());
+
+        // Delhi, 2026-11-11: sunrise 06:40, sunset 17:29 IST (UTC+5:30).
+        let sun = parse_sun(&json!({
+            "utc_offset_seconds": 19800,
+            "daily": {"sunrise": ["2026-11-11T06:40", "2026-11-12T06:41"],
+                      "sunset": ["2026-11-11T17:29", "2026-11-12T17:28"]}
+        }));
+        assert_eq!(sun.len(), 2);
+        let ist = |h: i64, m: i64| sun[0].0 + (h * 60 + m - (6 * 60 + 40)) * 60;
+        assert_eq!(is_day_at(&sun, ist(6, 39)), Some(false));
+        assert_eq!(is_day_at(&sun, ist(9, 30)), Some(true));
+        assert_eq!(is_day_at(&sun, ist(17, 30)), Some(false));
+        assert_eq!(
+            is_day_at(&sun, ist(23, 59) + 7 * 3600),
+            Some(true),
+            "next morning"
+        );
+        assert_eq!(
+            is_day_at(&sun, ist(6, 40) + 3 * 86400),
+            None,
+            "too old to tell"
+        );
+        assert_eq!(is_day_at(&[], 0), None);
         let mut w = w;
         let air =
             json!({"current": {"us_aqi": 99, "european_aqi": 79, "pm2_5": 25.1, "pm10": 32.7}});

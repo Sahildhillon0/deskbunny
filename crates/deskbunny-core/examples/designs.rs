@@ -24,6 +24,13 @@ fn main() {
         pm25: Some(25.1),
         pm10: Some(32.7),
     };
+    let usage = deskbunny_core::layout::Usage {
+        source: "CLAUDE".into(),
+        five: Some(42),
+        five_in: "2H15M".into(),
+        week: Some(18),
+        week_in: "3D4H".into(),
+    };
     let ctx = Ctx {
         time: ClockTime {
             hour: 10,
@@ -36,6 +43,7 @@ fn main() {
         year: 2026,
         weather: Some(&w),
         claude: "EDIT main.rs",
+        usage: Some(&usage),
     };
     let mut frames: Vec<[u8; 1024]> = templates().iter().map(|d| render(d, &ctx).0).collect();
     let icons = Design {

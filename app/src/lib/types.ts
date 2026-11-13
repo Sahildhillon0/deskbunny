@@ -332,6 +332,39 @@ export interface LiveConfig {
   claudeHold: boolean;
   notify: NotifyCfg;
   weather: WeatherCfg;
+  usage: UsageCfg;
+}
+
+export interface UsageCfg {
+  /** Which AI harness the usage screen shows (a `UsageHarness.id`). */
+  harness: string;
+}
+
+/** An AI coding tool whose plan usage the usage screen can show. */
+export interface UsageHarness {
+  id: string;
+  name: string;
+  /** `{USRC}` on the screen. */
+  short: string;
+  /** How to make it report to the app. */
+  setup: string;
+}
+
+export interface Usage {
+  source: string;
+  /** Percent used, null when unknown. */
+  five: number | null;
+  /** `2H15M`, `--` */
+  fiveIn: string;
+  week: number | null;
+  weekIn: string;
+}
+
+export interface UsageNow {
+  harness: string;
+  usage: Usage;
+  /** Seconds since the last report; null if none came yet. */
+  ageSecs: number | null;
 }
 
 export interface Place {
